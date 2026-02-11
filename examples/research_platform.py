@@ -45,7 +45,8 @@ from core.stats.statistics_tracker import StatisticsTracker, PopulationStats
 from core.logging.event_logger import EventLogger
 from core.population_manager import PopulationManager
 from core.morphology.mesh_generator import ProceduralMeshGenerator
-from visualization.gl_primitives import setup_lighting
+from visualization.gl_primitives import setup_lighting, draw_sphere, draw_cylinder
+from core.resources.resource import ResourceType
 
 # UI widgets
 from visualization.ui.config_panel import ConfigPanel
@@ -434,6 +435,12 @@ class ResearchPlatform:
         glRotatef(self.camera_elevation, 1, 0, 0)
         glRotatef(self.camera_rotation, 0, 1, 0)
         
+        # Render ground plane
+        self._render_ground()
+        
+        # Render resources (food & drugs)
+        self._render_resources()
+        
         # Render creatures with procedural meshes
         glEnable(GL_DEPTH_TEST)
         glEnable(GL_LIGHTING)
@@ -458,6 +465,9 @@ class ResearchPlatform:
             creature.mesh.render()
             
             glPopMatrix()
+        
+        # Render velocity vectors
+        self._render_velocity_vectors()
         
         # Switch to 2D for UI
         glMatrixMode(GL_PROJECTION)
@@ -487,6 +497,92 @@ class ResearchPlatform:
         glEnable(GL_DEPTH_TEST)
         
         pygame.display.flip()
+    
+    def _render_ground(self):
+        """Render ground plane with grid."""
+        world_w = int(self.config.get("world_size_x"))
+        world_h = int(self.config.get("world_size_y"))
+        hw = world_w / 2
+        hh = world_h / 2
+        
+        glDisable(GL_LIGHTING)
+        glColor4f(0.1, 0.15, 0.2, 1.0)
+        glBegin(GL_QUADS)
+        glVertex3f(-hw, -hh, 0)
+        glVertex3f(hw, -hh, 0)
+        glVertex3f(hw, hh, 0)
+        glVertex3f(-hw, hh, 0)
+        glEnd()
+        
+        # Grid lines
+        glColor4f(0.2, 0.25, 0.3, 0.5)
+        glBegin(GL_LINES)
+        grid_spacing = 50.0
+        for x in np.arange(-hw, hw + grid_spacing, grid_spacing):
+            glVertex3f(x, -hh, 0.1)
+            glVertex3f(x, hh, 0.1)
+        for y in np.arange(-hh, hh + grid_spacing, grid_spacing):
+            glVertex3f(-hw, y, 0.1)
+            glVertex3f(hw, y, 0.1)
+        glEnd()
+        
+        glEnable(GL_LIGHTING)
+    
+    def _render_resources(self):
+        """Render food and drug mushrooms."""
+        for resource in self.resource_manager.resources:
+            if not resource.active:
+                continue
+            
+            glPushMatrix()
+            glTranslatef(resource.x, resource.y, resource.z + resource.radius)
+            
+            if resource.resource_type == ResourceType.FOOD:
+                # Food as green sphere
+                glColor4f(0.0, 1.0, 0.0, 0.8)
+                draw_sphere(resource.radius, slices=8, stacks=8)
+            
+            elif resource.resource_type == ResourceType.DRUG_MUSHROOM:
+                # Drug mushroom stem
+                glColor4f(0.9, 0.9, 0.8, 0.9)
+                glPushMatrix()
+                glRotatef(-90, 1, 0, 0)
+                draw_cylinder(resource.radius * 0.3, resource.radius * 0.3, 
+                            resource.radius * 1.5, slices=8)
+                glPopMatrix()
+                
+                # Drug mushroom cap (colored by molecule type)
+                colors = [
+                    (0.5, 0.0, 1.0),  # Purple - Inhibitory Antagonist
+                    (1.0, 0.0, 0.5),  # Pink - Inhibitory Agonist
+                    (1.0, 0.5, 0.0),  # Orange - Excitatory Antagonist
+                    (0.0, 0.5, 1.0),  # Cyan - Excitatory Agonist
+                    (1.0, 1.0, 0.0),  # Yellow - Potentiator
+                ]
+                color = colors[resource.molecule_type] if resource.molecule_type is not None else (1.0, 1.0, 1.0)
+                glColor4f(*color, 0.9)
+                glPushMatrix()
+                glTranslatef(0, 0, resource.radius * 1.5)
+                draw_sphere(resource.radius, slices=8, stacks=8)
+                glPopMatrix()
+            
+            glPopMatrix()
+    
+    def _render_velocity_vectors(self):
+        """Render velocity vectors for moving creatures."""
+        for creature in self.creatures:
+            if hasattr(creature, 'rigid_body') and creature.rigid_body:
+                vel = creature.get_velocity()
+                vel_mag = np.linalg.norm(vel)
+                if vel_mag > 0.1:
+                    glDisable(GL_LIGHTING)
+                    glBegin(GL_LINES)
+                    glColor4f(1.0, 1.0, 0.0, 0.7)
+                    z_pos = creature.z if hasattr(creature, 'z') else 10
+                    glVertex3f(creature.x, creature.y, z_pos)
+                    glVertex3f(creature.x + vel[0] * 2, creature.y + vel[1] * 2, z_pos + vel[2] * 2)
+                    glEnd()
+                    glEnable(GL_LIGHTING)
     
     def _render_stats_overlay(self, surface):
         """Render quick stats overlay."""
