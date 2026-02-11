@@ -88,8 +88,15 @@ class ResearchPlatform:
                 def __init__(self, size=18):
                     self._size = size
                 def render(self, text, aa, color):
-                    # Return minimal surface
-                    return pygame.Surface((len(text) * self._size // 2, self._size))
+                    # Return colored surface so UI is at least visible
+                    width = max(len(text) * self._size // 2, 50)
+                    surf = pygame.Surface((width, self._size), pygame.SRCALPHA)
+                    # Fill with semi-transparent version of text color
+                    r, g, b = color[0], color[1], color[2]
+                    surf.fill((r, g, b, 100))  # Semi-transparent
+                    # Draw border for visibility
+                    pygame.draw.rect(surf, color, (0, 0, width, self._size), 1)
+                    return surf
                 def get_height(self):
                     return self._size
                 def get_linesize(self):
@@ -632,6 +639,17 @@ class ResearchPlatform:
         ui_surface = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
         ui_surface.fill((0, 0, 0, 0))
         
+        # Draw debug borders to show UI panel locations
+        # Config panel (left)
+        pygame.draw.rect(ui_surface, (100, 150, 255, 150), 
+                        (10, 10, 280, self.height - 20), 2)
+        # Graph panel (top right)
+        pygame.draw.rect(ui_surface, (255, 150, 100, 150),
+                        (self.width - 290, 10, 280, 400), 2)
+        # Console (bottom center)
+        pygame.draw.rect(ui_surface, (150, 255, 100, 150),
+                        (300, self.height - 210, self.width - 600, 200), 2)
+        
         # Render UI panels
         self.config_panel.render(ui_surface, self.font, self.small_font)
         self.graph_panel.render(ui_surface, self.font, self.small_font)
@@ -1011,22 +1029,41 @@ class ResearchPlatform:
             y += 20
     
     def _blit_pygame_to_opengl(self, surface):
-        """Blit pygame surface to OpenGL."""
-        texture_data = pygame.image.tostring(surface, "RGBA", True)
+        """Blit pygame surface to OpenGL using texture quad."""
+        # Convert pygame surface to OpenGL texture
+        texture_data = pygame.image.tostring(surface, "RGBA", False)
+        width = surface.get_width()
+        height = surface.get_height()
         
+        # Create texture if needed
+        if not hasattr(self, '_ui_texture'):
+            self._ui_texture = glGenTextures(1)
+        
+        # Bind and upload texture
+        glBindTexture(GL_TEXTURE_2D, self._ui_texture)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE, texture_data)
+        
+        # Enable texture and blending
+        glEnable(GL_TEXTURE_2D)
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         
-        glRasterPos2f(0, 0)
-        glDrawPixels(
-            surface.get_width(),
-            surface.get_height(),
-            GL_RGBA,
-            GL_UNSIGNED_BYTE,
-            texture_data
-        )
+        # Draw fullscreen quad with texture
+        glColor4f(1.0, 1.0, 1.0, 1.0)
+        glBegin(GL_QUADS)
+        glTexCoord2f(0, 0); glVertex2f(0, 0)
+        glTexCoord2f(1, 0); glVertex2f(width, 0)
+        glTexCoord2f(1, 1); glVertex2f(width, height)
+        glTexCoord2f(0, 1); glVertex2f(0, height)
+        glEnd()
         
+        # Cleanup
+        glDisable(GL_TEXTURE_2D)
         glDisable(GL_BLEND)
+        glBindTexture(GL_TEXTURE_2D, 0)
     
     def run(self):
         """Main loop."""
