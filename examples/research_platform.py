@@ -46,7 +46,7 @@ from core.logging.event_logger import EventLogger
 from core.population_manager import PopulationManager
 from core.morphology.mesh_generator import ProceduralMeshGenerator
 from visualization.gl_primitives import setup_lighting, draw_sphere, draw_cylinder
-from core.resources.resource import ResourceType
+from core.resources.resource import ResourceType, create_food, create_drug_mushroom
 
 # UI widgets
 from visualization.ui.config_panel import ConfigPanel
@@ -129,6 +129,20 @@ class ResearchPlatform:
         
         # Auto-save interval
         self.autosave_interval = 1000  # Every 1000 timesteps
+        
+        # Collision tracking
+        self.collision_count = 0
+        self.physics_world.register_collision_callback(self._on_collision)
+        
+        # Simulation control
+        self.time_speed = 1.0  # Time speed multiplier
+        
+        # Render modes and toggles
+        self.render_mode = 8  # 8 = all modes
+        self.show_thoughts = True
+        self.psychedelic_patterns_enabled = False
+        self.audio_enabled = False
+        self.show_help = False
         
         # Setup OpenGL
         glClearColor(0.05, 0.05, 0.1, 1.0)
@@ -226,10 +240,24 @@ class ResearchPlatform:
             if parameter.name == "creature_kill_half_at":
                 self.max_population = int(parameter.value)
     
+    def _on_collision(self, collision):
+        """Handle collision events."""
+        self.collision_count += 1
+        
+        # Let creatures handle their own collisions
+        from creatures.collective_creature import CollectiveCreature
+        if isinstance(collision.body_a.user_data, CollectiveCreature):
+            collision.body_a.user_data.handle_collision(collision)
+        if isinstance(collision.body_b.user_data, CollectiveCreature):
+            collision.body_b.user_data.handle_collision(collision)
+    
     def update(self, dt=1.0):
         """Update simulation."""
         if self.paused:
             return
+        
+        # Apply time speed multiplier
+        dt *= self.time_speed
         
         self.timestep += 1
         
@@ -398,6 +426,52 @@ class ResearchPlatform:
                     self.config.load_profile("quicksave")
                     self.config_panel._build_sliders()
                     self.console.add_line("Quick loaded!")
+                elif event.key == K_f:
+                    # Spawn food
+                    self._spawn_food()
+                elif event.key == K_d:
+                    # Spawn drug mushroom
+                    self._spawn_drug()
+                elif event.key == K_i:
+                    # Apply random impulses to creatures
+                    self._apply_random_impulses()
+                elif event.key == K_h:
+                    # Toggle help overlay
+                    self.show_help = not self.show_help
+                    self.console.add_line("Help: " + ("visible" if self.show_help else "hidden"))
+                elif event.key == K_t:
+                    # Toggle thought bubbles
+                    self.show_thoughts = not self.show_thoughts
+                    self.console.add_line("Thoughts: " + ("visible" if self.show_thoughts else "hidden"))
+                elif event.key == K_p:
+                    # Toggle psychedelic patterns
+                    self.psychedelic_patterns_enabled = not self.psychedelic_patterns_enabled
+                    for creature in self.creatures:
+                        creature.pattern_generation_enabled = self.psychedelic_patterns_enabled
+                    self.console.add_line("Psychedelic patterns: " + ("ON" if self.psychedelic_patterns_enabled else "OFF"))
+                elif event.key == K_a:
+                    # Toggle audio
+                    self.audio_enabled = not self.audio_enabled
+                    self.console.add_line("Audio: " + ("ON" if self.audio_enabled else "OFF"))
+                elif event.key == K_LEFTBRACKET:
+                    # Slow down time
+                    self.time_speed = max(0.1, self.time_speed / 1.5)
+                    self.console.add_line(f"Time speed: {self.time_speed:.2f}x")
+                elif event.key == K_RIGHTBRACKET:
+                    # Speed up time
+                    self.time_speed = min(10.0, self.time_speed * 1.5)
+                    self.console.add_line(f"Time speed: {self.time_speed:.2f}x")
+                elif K_1 <= event.key <= K_8:
+                    # Switch render mode
+                    self.render_mode = event.key - K_0
+                    mode_names = ["", "Creatures", "Neural", "Circuit8", "Resources", 
+                                  "Physics", "Signals", "Learning", "All"]
+                    self.console.add_line(f"Render mode: {mode_names[self.render_mode]}")
+                elif K_9 <= event.key <= K_0:
+                    # Give drugs to all creatures (9=inhibitory_antagonist, 0=potentiator)
+                    molecule_type = (event.key - K_9) if event.key != K_0 else 4
+                    if molecule_type < 5:
+                        self._give_drug_to_all(molecule_type)
             
             # Camera controls
             elif event.type == MOUSEWHEEL:
@@ -567,6 +641,69 @@ class ResearchPlatform:
                 glPopMatrix()
             
             glPopMatrix()
+    
+    def _spawn_food(self):
+        """Spawn food at random location."""
+        world_w = int(self.config.get("world_size_x"))
+        world_h = int(self.config.get("world_size_y"))
+        x = np.random.uniform(-world_w/2, world_w/2)
+        y = np.random.uniform(-world_h/2, world_h/2)
+        food = create_food(x, y, 0.0)
+        self.resource_manager.resources.append(food)
+        
+        # Create physics body
+        body = self.physics_world.create_sphere_body(
+            position=(x, y, food.radius),
+            radius=food.radius,
+            mass=0.1,
+            fixed=True,
+            user_data=food
+        )
+        body.collision_group = 2
+        body.collision_mask = 1
+        
+        self.console.add_line(f"🍎 Spawned food at ({x:.0f}, {y:.0f})")
+    
+    def _spawn_drug(self):
+        """Spawn drug mushroom at random location."""
+        world_w = int(self.config.get("world_size_x"))
+        world_h = int(self.config.get("world_size_y"))
+        x = np.random.uniform(-world_w/2, world_w/2)
+        y = np.random.uniform(-world_h/2, world_h/2)
+        molecule_type = np.random.randint(0, 5)
+        drug = create_drug_mushroom(x, y, 0.0, molecule_type)
+        self.resource_manager.resources.append(drug)
+        
+        # Create physics body
+        body = self.physics_world.create_sphere_body(
+            position=(x, y, drug.radius),
+            radius=drug.radius,
+            mass=0.1,
+            fixed=True,
+            user_data=drug
+        )
+        body.collision_group = 2
+        body.collision_mask = 1
+        
+        drug_names = ["Inh. Antag.", "Inh. Agon.", "Exc. Antag.", "Exc. Agon.", "Potent."]
+        self.console.add_line(f"🍄 Spawned {drug_names[molecule_type]} at ({x:.0f}, {y:.0f})")
+    
+    def _apply_random_impulses(self):
+        """Apply random impulses to all creatures."""
+        for creature in self.creatures:
+            if hasattr(creature, 'apply_impulse'):
+                impulse = np.random.uniform(-500, 500, size=3).astype(np.float32)
+                impulse[2] = abs(impulse[2])  # Always push up
+                creature.apply_impulse(impulse)
+        self.console.add_line("💥 Applied random impulses to all creatures!")
+    
+    def _give_drug_to_all(self, molecule_type: int):
+        """Give drug to all creatures."""
+        for creature in self.creatures:
+            if hasattr(creature, 'drugs'):
+                creature.drugs.tripping[molecule_type] += 5.0
+        drug_names = ["Inh. Antag.", "Inh. Agon.", "Exc. Antag.", "Exc. Agon.", "Potent."]
+        self.console.add_line(f"💊 Gave all creatures {drug_names[molecule_type]}")
     
     def _render_velocity_vectors(self):
         """Render velocity vectors for moving creatures."""
