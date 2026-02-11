@@ -48,11 +48,6 @@ from core.morphology.mesh_generator import ProceduralMeshGenerator
 from visualization.gl_primitives import setup_lighting, draw_sphere, draw_cylinder
 from core.resources.resource import ResourceType, create_food, create_drug_mushroom
 
-# UI widgets
-from visualization.ui.config_panel import ConfigPanel
-from visualization.ui.graph_widget import MultiGraphPanel
-from visualization.ui.console_widget import ConsoleWidget
-
 
 class ResearchPlatform:
     """Complete research platform with all Phase 10 systems."""
@@ -64,17 +59,47 @@ class ResearchPlatform:
         self.width = width
         self.height = height
         
-        # Create window with OpenGL
+        # Create window with OpenGL BEFORE any imports that use pygame.font
         pygame.display.set_mode(
             (width, height),
             DOUBLEBUF | OPENGL
         )
         pygame.display.set_caption("CritterGOD Research Platform - Phase 10")
         
-        # Fonts
-        self.font = pygame.font.Font(None, 18)
-        self.small_font = pygame.font.Font(None, 14)
-        self.title_font = pygame.font.Font(None, 24)
+        # Import UI widgets AFTER display init (avoids pygame.font circular import)
+        from visualization.ui.config_panel import ConfigPanel
+        from visualization.ui.graph_widget import MultiGraphPanel
+        from visualization.ui.console_widget import ConsoleWidget
+        self.ConfigPanel = ConfigPanel
+        self.MultiGraphPanel = MultiGraphPanel
+        self.ConsoleWidget = ConsoleWidget
+        
+        # Fonts (created AFTER UI widget imports complete)
+        try:
+            self.font = pygame.font.Font(None, 18)
+            self.small_font = pygame.font.Font(None, 14)
+            self.title_font = pygame.font.Font(None, 24)
+        except (NotImplementedError, ImportError) as e:
+            print(f"Warning: pygame.font not available: {e}")
+            print("This may be a pygame/Python 3.14 compatibility issue.")
+            print("UI text will not be rendered, but 3D visualization should work.")
+            # Create dummy font objects that won't crash
+            class DummyFont:
+                def __init__(self, size=18):
+                    self._size = size
+                def render(self, text, aa, color):
+                    # Return minimal surface
+                    return pygame.Surface((len(text) * self._size // 2, self._size))
+                def get_height(self):
+                    return self._size
+                def get_linesize(self):
+                    return self._size
+                def size(self, text):
+                    # Return (width, height) tuple
+                    return (len(text) * self._size // 2, self._size)
+            self.font = DummyFont(18)
+            self.small_font = DummyFont(14)
+            self.title_font = DummyFont(24)
         
         # Core systems
         self.config = ConfigManager()
@@ -144,6 +169,11 @@ class ResearchPlatform:
         self.audio_enabled = False
         self.show_help = False
         
+        # Mouse drag state for camera
+        self.mouse_dragging = False
+        self.last_mouse_x = 0
+        self.last_mouse_y = 0
+        
         # Setup OpenGL
         glClearColor(0.05, 0.05, 0.1, 1.0)
         glEnable(GL_DEPTH_TEST)
@@ -161,7 +191,7 @@ class ResearchPlatform:
         panel_width = 280
         
         # Config panel (left side)
-        self.config_panel = ConfigPanel(
+        self.config_panel = self.ConfigPanel(
             x=10,
             y=10,
             width=panel_width,
@@ -171,7 +201,7 @@ class ResearchPlatform:
         )
         
         # Stats graphs (top right)
-        self.graph_panel = MultiGraphPanel(
+        self.graph_panel = self.MultiGraphPanel(
             x=self.width - panel_width - 10,
             y=10,
             width=panel_width,
@@ -193,7 +223,7 @@ class ResearchPlatform:
         fps_graph.add_series("FPS", (255, 255, 100))
         
         # Console (bottom)
-        self.console = ConsoleWidget(
+        self.console = self.ConsoleWidget(
             x=panel_width + 20,
             y=self.height - 210,
             width=self.width - panel_width * 2 - 40,
@@ -423,8 +453,8 @@ class ResearchPlatform:
                         self.creatures, len(self.creatures), self.timestep, self.logger
                     )
                     self.console.add_line(f"Killed {len(killed)} creatures (weakest)")
-                elif event.key == K_s:
-                    # Save profile
+                elif event.key == K_v:
+                    # Save profile (changed from S to avoid WASD conflict)
                     self.config.save_profile("user_config")
                     self.console.add_line("Saved profile: user_config")
                 elif event.key == K_1:
@@ -463,8 +493,8 @@ class ResearchPlatform:
                     for creature in self.creatures:
                         creature.pattern_generation_enabled = self.psychedelic_patterns_enabled
                     self.console.add_line("Psychedelic patterns: " + ("ON" if self.psychedelic_patterns_enabled else "OFF"))
-                elif event.key == K_a:
-                    # Toggle audio
+                elif event.key == K_u:
+                    # Toggle audio (changed from A to avoid WASD conflict)
                     self.audio_enabled = not self.audio_enabled
                     self.console.add_line("Audio: " + ("ON" if self.audio_enabled else "OFF"))
                 elif event.key == K_LEFTBRACKET:
@@ -487,20 +517,37 @@ class ResearchPlatform:
                     if molecule_type < 5:
                         self._give_drug_to_all(molecule_type)
             
-            # Camera controls
+            # Mouse drag for camera rotation
+            elif event.type == MOUSEBUTTONDOWN:
+                if event.button == 1:  # Left mouse button
+                    self.mouse_dragging = True
+                    self.last_mouse_x, self.last_mouse_y = event.pos
+            elif event.type == MOUSEBUTTONUP:
+                if event.button == 1:
+                    self.mouse_dragging = False
+            elif event.type == MOUSEMOTION:
+                if self.mouse_dragging:
+                    dx = event.pos[0] - self.last_mouse_x
+                    dy = event.pos[1] - self.last_mouse_y
+                    self.camera_rotation += dx * 0.5
+                    self.camera_elevation -= dy * 0.5  # Inverted for natural feel
+                    self.camera_elevation = max(-89, min(89, self.camera_elevation))
+                    self.last_mouse_x, self.last_mouse_y = event.pos
+            
+            # Camera zoom
             elif event.type == MOUSEWHEEL:
                 self.camera_distance -= event.y * 20
                 self.camera_distance = max(100, min(2000, self.camera_distance))
         
-        # WASD camera rotation
+        # Arrow keys for camera pan/rotation (WASD removed to avoid conflicts)
         keys = pygame.key.get_pressed()
-        if keys[K_a]:
+        if keys[K_LEFT]:
             self.camera_rotation -= 2
-        if keys[K_d]:
+        if keys[K_RIGHT]:
             self.camera_rotation += 2
-        if keys[K_w]:
+        if keys[K_UP]:
             self.camera_elevation = min(80, self.camera_elevation + 2)
-        if keys[K_s]:
+        if keys[K_DOWN]:
             self.camera_elevation = max(-80, self.camera_elevation - 2)
         
         return True
@@ -877,7 +924,7 @@ class ResearchPlatform:
             "=== CRITTERGOD RESEARCH PLATFORM ===",
             "",
             "CAMERA:",
-            "  Mouse drag: Rotate | Scroll: Zoom | WASD: Pan",
+            "  Mouse drag: Rotate | Scroll: Zoom | Arrows: Pan",
             "  R: Reset camera",
             "",
             "SIMULATION:",
@@ -893,11 +940,11 @@ class ResearchPlatform:
             "VISUALIZATION:",
             "  1-8: Render modes (1=creatures, 8=all)",
             "  C: Toggle Circuit8 | T: Toggle thoughts",
-            "  P: Toggle psychedelic | A: Toggle audio",
+            "  P: Toggle psychedelic | U: Toggle audio",
             "  H: Toggle this help",
             "",
             "CONFIG:",
-            "  1: Load default | S: Save config",
+            "  1: Load default | V: Save config",
             "  F5: Quick save | F9: Quick load",
             "",
             "Press H to close",
