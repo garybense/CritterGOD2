@@ -669,7 +669,9 @@ class ResearchPlatform:
                     (0.0, 0.5, 1.0),  # Cyan - Excitatory Agonist
                     (1.0, 1.0, 0.0),  # Yellow - Potentiator
                 ]
-                color = colors[resource.molecule_type] if resource.molecule_type is not None else (1.0, 1.0, 1.0)
+                # Cast molecule_type to int (it may be stored as float)
+                mol_type = int(resource.molecule_type) if resource.molecule_type is not None else None
+                color = colors[mol_type] if mol_type is not None and 0 <= mol_type < 5 else (1.0, 1.0, 1.0)
                 glColor4f(*color, 0.9)
                 glPushMatrix()
                 glTranslatef(0, 0, resource.radius * 1.5)
