@@ -213,9 +213,9 @@ class ResearchPlatform:
         world_w = int(self.config.get("world_size_x"))
         world_h = int(self.config.get("world_size_y"))
         
-        # Use create_collective_creatures helper
+        # Use create_collective_creatures helper (start with fewer creatures)
         self.creatures = create_collective_creatures(
-            n_creatures=10,
+            n_creatures=3,  # Start with fewer to test stability
             physics_world=self.physics_world,
             circuit8=self.circuit8,
             collective_memory=self.collective_memory,
@@ -261,17 +261,31 @@ class ResearchPlatform:
         
         self.timestep += 1
         
-        # Update resources
-        self.resource_manager.update()
+        # Update physics world (with error handling)
+        try:
+            self.physics_world.step(dt * 0.016)  # Convert to seconds (assuming 60fps)
+        except Exception as e:
+            print(f"Physics update error: {e}")
         
-        # Update creatures
+        # Update resources
+        try:
+            self.resource_manager.update()
+        except Exception as e:
+            print(f"Resource update error: {e}")
+        
+        # Update creatures (with error handling to prevent lockups)
         alive_creatures = []
         for creature in self.creatures:
-            if creature.update(dt):
+            try:
+                if creature.update(dt):
+                    alive_creatures.append(creature)
+                else:
+                    # Log death
+                    self.logger.log_death(creature, self.timestep, "starvation")
+            except Exception as e:
+                print(f"Error updating creature: {e}")
+                # Keep creature alive but log error
                 alive_creatures.append(creature)
-            else:
-                # Log death
-                self.logger.log_death(creature, self.timestep, "starvation")
         
         self.creatures = alive_creatures
         
