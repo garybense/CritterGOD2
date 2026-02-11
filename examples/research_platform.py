@@ -509,11 +509,20 @@ class ResearchPlatform:
         glRotatef(self.camera_elevation, 1, 0, 0)
         glRotatef(self.camera_rotation, 0, 1, 0)
         
-        # Render ground plane
-        self._render_ground()
+        # Render Circuit8 ground plane (if enabled)
+        if self.show_circuit8 and self.render_mode in [3, 8]:
+            self._render_circuit8_ground()
+        else:
+            # Regular ground plane
+            self._render_ground()
+        
+        # Render collective signals (if enabled)
+        if self.render_mode in [6, 8]:
+            self._render_collective_signals()
         
         # Render resources (food & drugs)
-        self._render_resources()
+        if self.render_mode in [4, 8]:
+            self._render_resources()
         
         # Render creatures with procedural meshes
         glEnable(GL_DEPTH_TEST)
@@ -541,7 +550,12 @@ class ResearchPlatform:
             glPopMatrix()
         
         # Render velocity vectors
-        self._render_velocity_vectors()
+        if self.render_mode in [5, 8]:  # Physics debug mode
+            self._render_velocity_vectors()
+        
+        # Collect thoughts for rendering (if enabled)
+        if self.show_thoughts:
+            self._collect_thoughts()
         
         # Switch to 2D for UI
         glMatrixMode(GL_PROJECTION)
@@ -564,6 +578,14 @@ class ResearchPlatform:
         
         # Render stats overlay (center top)
         self._render_stats_overlay(ui_surface)
+        
+        # Render thought bubbles (if enabled)
+        if self.show_thoughts and hasattr(self, '_thoughts_to_render'):
+            self._render_thought_bubbles(ui_surface)
+        
+        # Render help overlay (if enabled)
+        if self.show_help:
+            self._render_help_overlay(ui_surface)
         
         # Blit to OpenGL
         self._blit_pygame_to_opengl(ui_surface)
@@ -704,6 +726,185 @@ class ResearchPlatform:
                 creature.drugs.tripping[molecule_type] += 5.0
         drug_names = ["Inh. Antag.", "Inh. Agon.", "Exc. Antag.", "Exc. Agon.", "Potent."]
         self.console.add_line(f"💊 Gave all creatures {drug_names[molecule_type]}")
+    
+    def _render_circuit8_ground(self):
+        """Render Circuit8 as glowing ground plane."""
+        glDisable(GL_DEPTH_TEST)
+        glDisable(GL_LIGHTING)
+        
+        glPushMatrix()
+        glTranslatef(0, 0, 0)
+        
+        # Sample center pixel for overall color
+        r, g, b = self.circuit8.read_pixel(32, 24)
+        r_f = min(1.0, float(r) / 255.0 * 3.0 + 0.3)
+        g_f = min(1.0, float(g) / 255.0 * 3.0 + 0.3)
+        b_f = min(1.0, float(b) / 255.0 * 3.0 + 0.3)
+        
+        # Draw colored ground
+        size = 500.0
+        glColor3f(r_f, g_f, b_f)
+        glBegin(GL_QUADS)
+        glVertex3f(-size, -size, 0)
+        glVertex3f(size, -size, 0)
+        glVertex3f(size, size, 0)
+        glVertex3f(-size, size, 0)
+        glEnd()
+        
+        # Bright border
+        glColor3f(1.0, 1.0, 0.0)
+        glLineWidth(5.0)
+        glBegin(GL_LINE_LOOP)
+        glVertex3f(-size, -size, 0.1)
+        glVertex3f(size, -size, 0.1)
+        glVertex3f(size, size, 0.1)
+        glVertex3f(-size, size, 0.1)
+        glEnd()
+        glLineWidth(1.0)
+        
+        glPopMatrix()
+        
+        glEnable(GL_DEPTH_TEST)
+        glEnable(GL_LIGHTING)
+    
+    def _render_collective_signals(self):
+        """Render collective memory markers."""
+        glDisable(GL_LIGHTING)
+        
+        # Resource markers
+        try:
+            for record in self.collective_memory.resource_locations:
+                if not isinstance(record, dict) or 'location' not in record:
+                    continue
+                
+                x, y = record['location']
+                resource_type = record.get('resource_type', 'unknown')
+                
+                color = (0.0, 1.0, 0.0, 0.5) if resource_type == 'food' else (1.0, 0.0, 1.0, 0.5)
+                
+                glPushMatrix()
+                glTranslatef(x, y, 2.0)
+                glColor4f(*color)
+                glBegin(GL_LINES)
+                glVertex3f(-3, 0, 0)
+                glVertex3f(3, 0, 0)
+                glVertex3f(0, -3, 0)
+                glVertex3f(0, 3, 0)
+                glEnd()
+                glPopMatrix()
+        except:
+            pass
+        
+        # Danger zones
+        try:
+            for record in self.collective_memory.danger_zones:
+                if not isinstance(record, dict) or 'location' not in record:
+                    continue
+                
+                x, y = record['location']
+                
+                glPushMatrix()
+                glTranslatef(x, y, 1.0)
+                glColor4f(1.0, 0.0, 0.0, 0.3)
+                glBegin(GL_LINE_LOOP)
+                for i in range(16):
+                    angle = i * 2 * np.pi / 16
+                    glVertex3f(10 * np.cos(angle), 10 * np.sin(angle), 0)
+                glEnd()
+                glPopMatrix()
+        except:
+            pass
+        
+        glEnable(GL_LIGHTING)
+    
+    def _collect_thoughts(self):
+        """Collect creature thoughts for rendering."""
+        self._thoughts_to_render = []
+        for creature in self.creatures:
+            if hasattr(creature, 'get_current_thought'):
+                thought = creature.get_current_thought()
+                if thought and len(thought.strip()) > 0:
+                    self._thoughts_to_render.append({
+                        'x': creature.x,
+                        'y': creature.y,
+                        'z': 10.0,
+                        'text': thought
+                    })
+    
+    def _render_thought_bubbles(self, surface):
+        """Render thought bubbles in 2D."""
+        # Simple approach: render text near creature positions
+        for i, creature in enumerate(self.creatures[:10]):  # Limit to 10
+            if hasattr(creature, 'get_current_thought'):
+                thought = creature.get_current_thought()
+                if thought and len(thought.strip()) > 0:
+                    # Truncate long thoughts
+                    text = thought[:30]
+                    if len(thought) > 30:
+                        text += "..."
+                    
+                    # Render at creature position (approximate)
+                    text_surf = self.small_font.render(text, True, (255, 255, 100))
+                    x = int(self.width / 2 + creature.x)
+                    y = int(self.height / 2 - creature.y - 20)
+                    
+                    # Background
+                    bg = pygame.Surface((text_surf.get_width() + 4, text_surf.get_height() + 2))
+                    bg.fill((0, 0, 0))
+                    bg.set_alpha(150)
+                    surface.blit(bg, (x - 2, y - 1))
+                    surface.blit(text_surf, (x, y))
+    
+    def _render_help_overlay(self, surface):
+        """Render help overlay."""
+        help_lines = [
+            "=== CRITTERGOD RESEARCH PLATFORM ===",
+            "",
+            "CAMERA:",
+            "  Mouse drag: Rotate | Scroll: Zoom | WASD: Pan",
+            "  R: Reset camera",
+            "",
+            "SIMULATION:",
+            "  Space: Pause/unpause",
+            "  [/]: Slow/speed time (0.1x-10x)",
+            "  K: Kill half population",
+            "",
+            "INTERACTIVE:",
+            "  F: Spawn food | D: Spawn drug",
+            "  I: Apply impulses (physics test)",
+            "  9-0: Give drugs to all (by type)",
+            "",
+            "VISUALIZATION:",
+            "  1-8: Render modes (1=creatures, 8=all)",
+            "  C: Toggle Circuit8 | T: Toggle thoughts",
+            "  P: Toggle psychedelic | A: Toggle audio",
+            "  H: Toggle this help",
+            "",
+            "CONFIG:",
+            "  1: Load default | S: Save config",
+            "  F5: Quick save | F9: Quick load",
+            "",
+            "Press H to close",
+        ]
+        
+        # Semi-transparent background
+        help_bg = pygame.Surface((500, len(help_lines) * 22 + 20))
+        help_bg.fill((0, 0, 50))
+        help_bg.set_alpha(220)
+        
+        x = self.width // 2 - 250
+        y = self.height // 2 - (len(help_lines) * 11 + 10)
+        surface.blit(help_bg, (x, y))
+        
+        # Render help text
+        for i, line in enumerate(help_lines):
+            if "===" in line:
+                text = self.font.render(line, True, (255, 255, 0))
+            elif line.strip() and not line.startswith("  "):
+                text = self.font.render(line, True, (100, 200, 255))
+            else:
+                text = self.small_font.render(line, True, (200, 200, 200))
+            surface.blit(text, (x + 10, y + 10 + i * 22))
     
     def _render_velocity_vectors(self):
         """Render velocity vectors for moving creatures."""
