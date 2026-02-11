@@ -1,0 +1,19 @@
+# Psychedelic Profile
+# Maximum drug effects and visual intensity
+# Inherit from default and override drug parameters
+
+inherit: default
+
+drugs:
+  decay_rate: 0.95  # Slower decay = longer trips (was 0.99)
+  potentiator_multiplier: 25.0  # Stronger amplification (was 10.0)
+  drug_effect_strength: 2.5  # Global amplification
+
+energy:
+  initial_energy: 5000000.0  # More energy for longer sessions
+  
+morphic:
+  circuit8_decay_rate: 0.90  # Faster fade = more psychedelic trails
+
+visualization:
+  target_fps: 60  # Smoother visuals for trip experience

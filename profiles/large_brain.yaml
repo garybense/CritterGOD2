@@ -1,0 +1,27 @@
+# Large Brain Profile
+# For GPU-accelerated 10k+ neuron networks (Phase 10b)
+# Requires GPU backend to run at reasonable speed
+
+inherit: default
+
+evolution:
+  n_sensory_min: 100
+  n_sensory_max: 500
+  n_motor_min: 100
+  n_motor_max: 500
+  n_hidden_min: 5000
+  n_hidden_max: 10000
+  population_size: 10  # Smaller population for large brains
+  
+neural:
+  synapses_per_neuron: 100  # More connectivity for large networks
+  synapse_weakening_rate: 0.0001  # Slower weakening in large networks
+  
+energy:
+  neuron_existence_cost: 0.001  # Lower cost (otherwise too expensive)
+  synapse_existence_cost: 0.0001
+  initial_energy: 10000000.0
+  max_energy: 100000000.0
+
+visualization:
+  target_fps: 20  # Lower FPS target for heavy computation

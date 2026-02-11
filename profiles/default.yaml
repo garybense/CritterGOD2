@@ -1,0 +1,67 @@
+# CritterGOD Default Profile
+# Heritage values from Critterding (foodotrope-drug.profile)
+
+neural:
+  neuron_threshold_min: 700.0
+  neuron_threshold_max: 8000.0
+  inhibitory_ratio: 0.30  # CritterGOD4 discovery (was 0.14 in heritage)
+  inhibitory_synapse_ratio: 0.21
+  synapses_per_neuron: 40
+  enable_plasticity: true
+  plasticity_rate: 0.1
+  synapse_weakening_rate: 0.001  # Phase 5a discovery
+  weight_min: -5.0  # Phase 5a discovery
+  weight_max: 5.0   # Phase 5a discovery
+
+evolution:
+  mutation_rate: 0.5
+  n_sensory_min: 10
+  n_sensory_max: 50
+  n_motor_min: 10
+  n_motor_max: 50
+  n_hidden_min: 50
+  n_hidden_max: 200
+  population_size: 30
+  tournament_size: 5
+
+energy:
+  initial_energy: 1000000.0
+  max_energy: 10000000.0
+  base_metabolism: 50.0
+  neuron_existence_cost: 0.01
+  synapse_existence_cost: 0.001
+  neuron_firing_cost: 1.0
+  motor_activation_cost: 10.0
+  food_energy_value: 100000.0  # Heritage
+  reproduction_cost: 500000.0
+
+drugs:
+  decay_rate: 0.99  # 1% decay per timestep
+  potentiator_multiplier: 10.0  # Heritage 10x amplification
+  drug_effect_strength: 1.0
+
+morphic:
+  circuit8_width: 64   # Heritage dimensions
+  circuit8_height: 48
+  circuit8_depth: 1024
+  circuit8_decay_rate: 0.95
+
+morphology:
+  min_segments: 2
+  max_segments: 10
+  max_limbs_per_segment: 4
+  body_mutation_rate: 0.1
+  body_mass_energy_cost: 0.01
+
+world:
+  world_width: 1000.0
+  world_height: 1000.0
+  timestep: 1.0
+
+visualization:
+  window_width: 1400
+  window_height: 900
+  target_fps: 30
+  camera_distance: 800.0
+  camera_azimuth: 45.0
+  camera_elevation: 35.0

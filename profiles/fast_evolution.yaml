@@ -1,0 +1,25 @@
+# Fast Evolution Profile
+# Rapid mutation and turnover for quick experimentation
+
+inherit: default
+
+evolution:
+  mutation_rate: 0.8  # Much higher mutation rate (was 0.5)
+  population_size: 50  # Larger population
+  tournament_size: 3  # Less selection pressure
+
+energy:
+  base_metabolism: 200.0  # Die faster (was 50.0)
+  initial_energy: 500000.0  # Less energy = shorter lifespans
+  reproduction_cost: 100000.0  # Easier to reproduce (was 500000)
+  
+morphology:
+  body_mutation_rate: 0.3  # Faster morphological evolution (was 0.1)
+  max_segments: 15  # Allow more extreme bodies
+  
+neural:
+  synapse_weakening_rate: 0.005  # Faster pruning (was 0.001)
+
+world:
+  world_width: 2000.0  # Bigger world
+  world_height: 2000.0
