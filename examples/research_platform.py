@@ -44,6 +44,8 @@ from core.config.parameters import ParameterCategory
 from core.stats.statistics_tracker import StatisticsTracker, PopulationStats
 from core.logging.event_logger import EventLogger
 from core.population_manager import PopulationManager
+from core.morphology.mesh_generator import ProceduralMeshGenerator
+from visualization.gl_primitives import setup_lighting
 
 # UI widgets
 from visualization.ui.config_panel import ConfigPanel
@@ -109,6 +111,9 @@ class ResearchPlatform:
         self.creatures = []
         self._spawn_initial_creatures()
         
+        # Mesh generator for creature bodies
+        self.mesh_generator = ProceduralMeshGenerator()
+        
         # Camera state for 3D  
         self.camera_distance = 400.0
         self.camera_rotation = 45.0
@@ -123,6 +128,13 @@ class ResearchPlatform:
         
         # Auto-save interval
         self.autosave_interval = 1000  # Every 1000 timesteps
+        
+        # Setup OpenGL
+        glClearColor(0.05, 0.05, 0.1, 1.0)
+        glEnable(GL_DEPTH_TEST)
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        setup_lighting()
         
         print("Research Platform initialized!")
         print(f"Config: {self.config.profile_name}")
@@ -422,15 +434,29 @@ class ResearchPlatform:
         glRotatef(self.camera_elevation, 1, 0, 0)
         glRotatef(self.camera_rotation, 0, 1, 0)
         
-        # Render simple creatures as spheres
+        # Render creatures with procedural meshes
         glEnable(GL_DEPTH_TEST)
+        glEnable(GL_LIGHTING)
+        
         for creature in self.creatures:
+            # Generate mesh if needed
+            if not hasattr(creature, 'mesh') or creature.mesh is None:
+                creature.mesh = self.mesh_generator.generate_creature_mesh(creature.body)
+            
             glPushMatrix()
-            glTranslatef(creature.x, 10, creature.y)
-            # Color by energy
-            energy_ratio = min(1.0, creature.energy.energy / 500000)
-            glColor3f(0.5 + energy_ratio * 0.5, 0.3, 0.3)
-            # Simple sphere (using pygame)
+            glTranslatef(creature.x, creature.y, 10)  # z=10 for height above ground
+            
+            # Drug-responsive scale
+            scale = creature.get_render_scale() if hasattr(creature, 'get_render_scale') else 1.0
+            glScalef(scale, scale, scale)
+            
+            # Base body scale
+            body_scale = 5.0
+            glScalef(body_scale, body_scale, body_scale)
+            
+            # Render mesh
+            creature.mesh.render()
+            
             glPopMatrix()
         
         # Switch to 2D for UI
