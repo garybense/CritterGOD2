@@ -1058,7 +1058,8 @@ class ResearchPlatform:
         # Enable texture and blending
         glEnable(GL_TEXTURE_2D)
         glEnable(GL_BLEND)
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        # Use ONE/ZERO blend mode - SRC_ALPHA doesn't work on some systems
+        glBlendFunc(GL_ONE, GL_ZERO)
         
         # Draw fullscreen quad with texture
         glColor4f(1.0, 1.0, 1.0, 1.0)
