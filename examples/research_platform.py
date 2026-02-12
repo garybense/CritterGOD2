@@ -59,12 +59,22 @@ class ResearchPlatform:
         self.width = width
         self.height = height
         
+        # Force window to top-left corner so it's visible
+        os.environ['SDL_VIDEO_WINDOW_POS'] = "50,50"
+        
         # Create window with OpenGL BEFORE any imports that use pygame.font
         pygame.display.set_mode(
             (width, height),
             DOUBLEBUF | OPENGL
         )
-        pygame.display.set_caption("CritterGOD Research Platform - Phase 10")
+        pygame.display.set_caption("🔴 CritterGOD Research Platform - LOOK HERE! 🔴")
+        
+        # Send macOS notification so user knows window opened
+        import subprocess
+        subprocess.run([
+            'osascript', '-e',
+            'display notification "Research Platform window is OPEN! Use Cmd+Tab to switch to it." with title "CritterGOD Started"'
+        ], check=False)
         
         # Import UI widgets AFTER display init (avoids pygame.font circular import)
         from visualization.ui.config_panel import ConfigPanel
