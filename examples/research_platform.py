@@ -639,16 +639,25 @@ class ResearchPlatform:
         ui_surface = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
         ui_surface.fill((0, 0, 0, 0))
         
-        # Draw debug borders to show UI panel locations
-        # Config panel (left)
-        pygame.draw.rect(ui_surface, (100, 150, 255, 150), 
-                        (10, 10, 280, self.height - 20), 2)
-        # Graph panel (top right)
-        pygame.draw.rect(ui_surface, (255, 150, 100, 150),
-                        (self.width - 290, 10, 280, 400), 2)
-        # Console (bottom center)
-        pygame.draw.rect(ui_surface, (150, 255, 100, 150),
-                        (300, self.height - 210, self.width - 600, 200), 2)
+        # Draw VERY VISIBLE backgrounds for UI panels
+        # Config panel (left) - Bright blue background
+        bg = pygame.Surface((280, self.height - 20), pygame.SRCALPHA)
+        bg.fill((50, 100, 200, 200))  # Semi-transparent blue
+        ui_surface.blit(bg, (10, 10))
+        pygame.draw.rect(ui_surface, (100, 200, 255), (10, 10, 280, self.height - 20), 3)
+        
+        # Graph panel (top right) - Bright orange background
+        bg = pygame.Surface((280, 400), pygame.SRCALPHA)
+        bg.fill((200, 100, 50, 200))  # Semi-transparent orange
+        ui_surface.blit(bg, (self.width - 290, 10))
+        pygame.draw.rect(ui_surface, (255, 150, 100), (self.width - 290, 10, 280, 400), 3)
+        
+        # Console (bottom center) - Bright green background
+        console_w = self.width - 600
+        bg = pygame.Surface((console_w, 200), pygame.SRCALPHA)
+        bg.fill((50, 200, 100, 200))  # Semi-transparent green
+        ui_surface.blit(bg, (300, self.height - 210))
+        pygame.draw.rect(ui_surface, (100, 255, 150), (300, self.height - 210, console_w, 200), 3)
         
         # Render UI panels
         self.config_panel.render(ui_surface, self.font, self.small_font)
