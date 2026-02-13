@@ -555,8 +555,8 @@ class ResearchPlatform:
             
             # Camera zoom
             elif event.type == MOUSEWHEEL:
-                self.camera_distance -= event.y * 20
-                self.camera_distance = max(100, min(2000, self.camera_distance))
+                self.camera_distance -= event.y * 50  # Faster zoom
+                self.camera_distance = max(50, min(5000, self.camera_distance))  # Wider range
         
         # Arrow keys for camera pan/rotation (WASD removed to avoid conflicts)
         keys = pygame.key.get_pressed()
@@ -1442,8 +1442,8 @@ class ResearchPlatform:
         # Enable texture and blending
         glEnable(GL_TEXTURE_2D)
         glEnable(GL_BLEND)
-        # Use ONE/ZERO blend mode - SRC_ALPHA doesn't work on some systems
-        glBlendFunc(GL_ONE, GL_ZERO)
+        # Proper alpha blending for UI visibility
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         
         # Draw fullscreen quad with texture
         glColor4f(1.0, 1.0, 1.0, 1.0)
