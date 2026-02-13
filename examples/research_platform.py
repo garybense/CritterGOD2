@@ -157,10 +157,10 @@ class ResearchPlatform:
         # Mesh generator for creature bodies
         self.mesh_generator = ProceduralMeshGenerator()
         
-        # Camera state for 3D  
-        self.camera_distance = 400.0
+        # Camera state for 3D (start zoomed out more)
+        self.camera_distance = 800.0
         self.camera_rotation = 45.0
-        self.camera_elevation = 30.0
+        self.camera_elevation = 45.0
         self.show_circuit8 = True
         
         # UI panels
@@ -541,6 +541,11 @@ class ResearchPlatform:
                     self.last_mouse_x, self.last_mouse_y = event.pos
                 elif event.button == 3:  # Right click - inspect creature
                     self._try_inspect_creature(event.pos)
+                # Scroll wheel (some pygame versions use button 4/5)
+                elif event.button == 4:  # Scroll up
+                    self.camera_distance = max(50, self.camera_distance - 30)
+                elif event.button == 5:  # Scroll down
+                    self.camera_distance = min(2000, self.camera_distance + 30)
             elif event.type == MOUSEBUTTONUP:
                 if event.button == 1:
                     self.mouse_dragging = False
@@ -553,10 +558,10 @@ class ResearchPlatform:
                     self.camera_elevation = max(-89, min(89, self.camera_elevation))
                     self.last_mouse_x, self.last_mouse_y = event.pos
             
-            # Camera zoom
+            # Camera zoom (MOUSEWHEEL event for newer pygame)
             elif event.type == MOUSEWHEEL:
-                self.camera_distance -= event.y * 50  # Faster zoom
-                self.camera_distance = max(50, min(5000, self.camera_distance))  # Wider range
+                self.camera_distance -= event.y * 30
+                self.camera_distance = max(50, min(2000, self.camera_distance))
         
         # Arrow keys for camera pan/rotation (WASD removed to avoid conflicts)
         keys = pygame.key.get_pressed()
@@ -645,11 +650,13 @@ class ResearchPlatform:
         if self.show_thoughts:
             self._collect_thoughts()
         
-        # Switch to 2D for UI
+        # Switch to 2D for UI (with proper matrix state management like phase9c)
         glMatrixMode(GL_PROJECTION)
+        glPushMatrix()
         glLoadIdentity()
         gluOrtho2D(0, self.width, self.height, 0)
         glMatrixMode(GL_MODELVIEW)
+        glPushMatrix()
         glLoadIdentity()
         
         glDisable(GL_DEPTH_TEST)
@@ -702,7 +709,12 @@ class ResearchPlatform:
         # Blit to OpenGL
         self._blit_pygame_to_opengl(ui_surface)
         
+        # Restore 3D state (pop matrices from earlier push)
         glEnable(GL_DEPTH_TEST)
+        glMatrixMode(GL_PROJECTION)
+        glPopMatrix()
+        glMatrixMode(GL_MODELVIEW)
+        glPopMatrix()
         
         pygame.display.flip()
     
@@ -1422,11 +1434,18 @@ class ResearchPlatform:
             y += 20
     
     def _blit_pygame_to_opengl(self, surface):
-        """Blit pygame surface to OpenGL using texture quad."""
-        # Convert pygame surface to OpenGL texture
-        texture_data = pygame.image.tostring(surface, "RGBA", False)
+        """Blit pygame surface to OpenGL using texture quad.
+        
+        Uses the same approach as phase9c_demo.py which works correctly:
+        - Flip surface vertically (pygame Y=0 is top, OpenGL Y=0 is bottom)
+        - Use texture coordinates that map flipped surface correctly
+        """
         width = surface.get_width()
         height = surface.get_height()
+        
+        # CRITICAL: Flip surface vertically for OpenGL (like phase9c)
+        flipped_surface = pygame.transform.flip(surface, False, True)
+        texture_data = pygame.image.tostring(flipped_surface, "RGBA", False)
         
         # Create texture if needed
         if not hasattr(self, '_ui_texture'):
@@ -1442,16 +1461,15 @@ class ResearchPlatform:
         # Enable texture and blending
         glEnable(GL_TEXTURE_2D)
         glEnable(GL_BLEND)
-        # Proper alpha blending for UI visibility
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         
-        # Draw fullscreen quad with texture
+        # Draw fullscreen quad with texture coordinates matching phase9c
         glColor4f(1.0, 1.0, 1.0, 1.0)
         glBegin(GL_QUADS)
-        glTexCoord2f(0, 0); glVertex2f(0, 0)
-        glTexCoord2f(1, 0); glVertex2f(width, 0)
-        glTexCoord2f(1, 1); glVertex2f(width, height)
-        glTexCoord2f(0, 1); glVertex2f(0, height)
+        glTexCoord2f(0, 1); glVertex2f(0, 0)
+        glTexCoord2f(1, 1); glVertex2f(width, 0)
+        glTexCoord2f(1, 0); glVertex2f(width, height)
+        glTexCoord2f(0, 0); glVertex2f(0, height)
         glEnd()
         
         # Cleanup
