@@ -1139,10 +1139,12 @@ class ResearchPlatform:
             
             # Check observation history
             if hasattr(creature.learner, 'observation_history'):
-                for observation in creature.learner.observation_history[-5:]:  # Last 5 observations
-                    # Find the creature that was observed
-                    observed_id = observation.get('creature_id') if isinstance(observation, dict) else None
-                    if not observed_id:
+                # Convert deque to list for slicing (deques don't support slice notation)
+                history = list(creature.learner.observation_history)
+                for observation in history[-5:]:  # Last 5 observations
+                    # Find the creature that was observed (BehaviorObservation dataclass)
+                    observed_id = getattr(observation, 'creature_id', None)
+                    if observed_id is None:
                         continue
                     
                     for other in self.creatures:
@@ -1158,8 +1160,8 @@ class ResearchPlatform:
                             cz2 = other.z if hasattr(other, 'z') else 10.0
                             
                             # Line color based on success
-                            success = observation.get('success', False)
-                            if success:
+                            outcome = getattr(observation, 'outcome', None)
+                            if outcome == 'success':
                                 glColor4f(0.0, 1.0, 0.3, 0.4)  # Green for successful learning
                             else:
                                 glColor4f(1.0, 0.5, 0.0, 0.3)  # Orange for observation
