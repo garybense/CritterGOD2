@@ -327,9 +327,9 @@ All creature types exist and build on each other:
 ## 🔄 MISSING/INCOMPLETE
 
 ### Minor Missing Features:
-1. ⚠️ **Creature Inspector** - Click to inspect detailed state (UI TODO)
-2. ⚠️ **Neural network visualization** - Mode 2 placeholder (not rendered)
-3. ⚠️ **Social learning visualization** - Mode 7 placeholder (not rendered)
+1. ✅ **Creature Inspector** - IMPLEMENTED! Right-click to inspect creature (vitals, brain, drugs, behavior, physics, thoughts, social learning)
+2. ✅ **Neural network visualization** - IMPLEMENTED! Mode 2 shows firing neurons (excitatory=yellow, inhibitory=blue) + activity rings
+3. ✅ **Social learning visualization** - IMPLEMENTED! Mode 7 shows observation lines between creatures + learning progress circles
 4. ⚠️ **Dynamic synapse rewiring** - Not implemented (performance consideration)
 
 ### Not Used (But Exist):

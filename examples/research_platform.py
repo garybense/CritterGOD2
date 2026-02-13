@@ -539,6 +539,8 @@ class ResearchPlatform:
                 if event.button == 1:  # Left mouse button
                     self.mouse_dragging = True
                     self.last_mouse_x, self.last_mouse_y = event.pos
+                elif event.button == 3:  # Right click - inspect creature
+                    self._try_inspect_creature(event.pos)
             elif event.type == MOUSEBUTTONUP:
                 if event.button == 1:
                     self.mouse_dragging = False
@@ -598,6 +600,10 @@ class ResearchPlatform:
         if self.render_mode in [6, 8]:
             self._render_collective_signals()
         
+        # Render social learning connections (Mode 7 or 8)
+        if self.render_mode in [7, 8]:
+            self._render_social_learning()
+        
         # Render resources (food & drugs)
         if self.render_mode in [4, 8]:
             self._render_resources()
@@ -630,6 +636,10 @@ class ResearchPlatform:
         # Render velocity vectors
         if self.render_mode in [5, 8]:  # Physics debug mode
             self._render_velocity_vectors()
+        
+        # Render neural activity visualization (Mode 2 or 8)
+        if self.render_mode in [2, 8]:
+            self._render_neural_activity()
         
         # Collect thoughts for rendering (if enabled)
         if self.show_thoughts:
@@ -680,6 +690,10 @@ class ResearchPlatform:
         # Render thought bubbles (if enabled)
         if self.show_thoughts and hasattr(self, '_thoughts_to_render'):
             self._render_thought_bubbles(ui_surface)
+        
+        # Render creature inspector (if a creature is selected)
+        if self.selected_creature:
+            self._render_inspector_panel(ui_surface)
         
         # Render help overlay (if enabled)
         if self.show_help:
@@ -827,6 +841,363 @@ class ResearchPlatform:
         drug_names = ["Inh. Antag.", "Inh. Agon.", "Exc. Antag.", "Exc. Agon.", "Potent."]
         self.console.add_line(f"💊 Gave all creatures {drug_names[molecule_type]}")
     
+    def _try_inspect_creature(self, mouse_pos):
+        """Try to pick and inspect a creature at mouse position."""
+        # Get ray from mouse position
+        ray_origin, ray_dir = self._get_ray_from_mouse(mouse_pos)
+        
+        # Find closest creature hit
+        closest_creature = None
+        closest_dist = float('inf')
+        
+        for creature in self.creatures:
+            # Simple sphere intersection test
+            pos = np.array([creature.x, creature.y, creature.z if hasattr(creature, 'z') else 10.0])
+            radius = 15.0  # Approximate creature radius for picking
+            
+            # Ray-sphere intersection
+            oc = ray_origin - pos
+            b = 2.0 * np.dot(oc, ray_dir)
+            c = np.dot(oc, oc) - radius * radius
+            discriminant = b*b - 4*c
+            
+            if discriminant >= 0:
+                t = (-b - np.sqrt(discriminant)) / 2.0
+                if 0 < t < closest_dist:
+                    closest_dist = t
+                    closest_creature = creature
+        
+        # Toggle inspection
+        if closest_creature:
+            if self.selected_creature == closest_creature:
+                self.selected_creature = None  # Close inspector
+                self.console.add_line("🔍 Inspector closed")
+            else:
+                self.selected_creature = closest_creature
+                self.console.add_line(f"🔍 Inspecting creature {closest_creature.creature_id}")
+        else:
+            # Clicked on nothing - close inspector
+            if self.selected_creature:
+                self.selected_creature = None
+                self.console.add_line("🔍 Inspector closed")
+    
+    def _get_ray_from_mouse(self, mouse_pos):
+        """Get ray from mouse position in 3D space."""
+        # Get viewport and matrices
+        viewport = glGetIntegerv(GL_VIEWPORT)
+        modelview = glGetDoublev(GL_MODELVIEW_MATRIX)
+        projection = glGetDoublev(GL_PROJECTION_MATRIX)
+        
+        # Mouse Y is inverted
+        win_x = float(mouse_pos[0])
+        win_y = float(viewport[3] - mouse_pos[1])
+        
+        # Unproject near and far points
+        near_pt = gluUnProject(win_x, win_y, 0.0, modelview, projection, viewport)
+        far_pt = gluUnProject(win_x, win_y, 1.0, modelview, projection, viewport)
+        
+        # Create ray
+        ray_origin = np.array(near_pt, dtype=np.float32)
+        ray_dir = np.array(far_pt, dtype=np.float32) - ray_origin
+        ray_dir = ray_dir / np.linalg.norm(ray_dir)
+        
+        return ray_origin, ray_dir
+    
+    def _render_inspector_panel(self, surface):
+        """Render creature inspector panel on the right side of screen."""
+        c = self.selected_creature
+        if not c:
+            return
+        
+        # Build inspector info lines
+        inspector_lines = [
+            f"🔍 CREATURE {c.creature_id}",
+            "",
+            "VITALS:",
+            f"  Age: {c.age} | Generation: {c.generation}",
+            f"  Energy: {c.energy.energy:,.0f} / {c.energy.max_energy:,.0f}",
+            f"  Position: ({c.x:.0f}, {c.y:.0f}, {c.z if hasattr(c, 'z') else 0:.0f})",
+        ]
+        
+        # Adam distance if available
+        if hasattr(c, 'adam_distance'):
+            inspector_lines.append(f"  Adam Distance: {c.adam_distance}")
+        
+        inspector_lines.extend([
+            "",
+            "BRAIN:",
+            f"  Neurons: {len(c.network.neurons)}",
+            f"  Synapses: {len(c.network.synapses)}",
+            f"  Activity: {c.network.get_activity_level()*100:.1f}%",
+            f"  Plasticity: {'ON' if c.network.enable_plasticity else 'OFF'}",
+            "",
+            "DRUGS:",
+        ])
+        
+        # Drug levels
+        drug_names = ["Inh.Antag", "Inh.Agon", "Exc.Antag", "Exc.Agon", "POTENT"]
+        for i, name in enumerate(drug_names):
+            if hasattr(c, 'drugs'):
+                level = c.drugs.tripping[i]
+                if level > 1.0:
+                    bar_len = int(min(15, level / 5000))
+                    bar = "█" * bar_len
+                    inspector_lines.append(f"  {name}: {level:>7.0f} {bar}")
+        
+        inspector_lines.extend([
+            "",
+            "BEHAVIOR:",
+        ])
+        
+        # Current behavior
+        if hasattr(c, 'current_behavior'):
+            inspector_lines.append(f"  State: {c.current_behavior.name}")
+        if hasattr(c, 'food_consumed'):
+            inspector_lines.append(f"  Food eaten: {c.food_consumed}")
+        
+        # Addiction info
+        if hasattr(c, 'behavior'):
+            if hasattr(c.behavior, 'addiction_level'):
+                inspector_lines.append(f"  Addiction: {c.behavior.addiction_level:.2f}")
+            if hasattr(c.behavior, 'tolerance'):
+                inspector_lines.append(f"  Tolerance: {c.behavior.tolerance:.2f}")
+            if hasattr(c.behavior, 'withdrawal_severity'):
+                inspector_lines.append(f"  Withdrawal: {c.behavior.withdrawal_severity:.2f}")
+        
+        # Velocity if available
+        if hasattr(c, 'get_velocity'):
+            vel = c.get_velocity()
+            speed = np.linalg.norm(vel)
+            inspector_lines.extend([
+                "",
+                "PHYSICS:",
+                f"  Speed: {speed:.1f}",
+                f"  Velocity: ({vel[0]:.1f}, {vel[1]:.1f}, {vel[2]:.1f})",
+            ])
+        
+        # Current thought
+        if hasattr(c, 'get_current_thought'):
+            thought = c.get_current_thought()
+            if thought:
+                inspector_lines.extend([
+                    "",
+                    "LAST THOUGHT:",
+                    f"  {thought[:35]}",
+                ])
+        
+        # Social learning stats
+        if hasattr(c, 'learner'):
+            inspector_lines.extend([
+                "",
+                "SOCIAL LEARNING:",
+                f"  Observations: {len(c.learner.observation_history)}",
+                f"  Behaviors: {len(c.learner.behavior_success_rates)}",
+            ])
+        
+        inspector_lines.extend([
+            "",
+            "Right-click to close",
+        ])
+        
+        # Create panel surface
+        panel_width = 280
+        panel_height = min(600, len(inspector_lines) * 18 + 30)
+        panel = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
+        panel.fill((20, 40, 60, 220))  # Dark blue semi-transparent
+        pygame.draw.rect(panel, (100, 200, 255), (0, 0, panel_width, panel_height), 2)
+        
+        # Render each line
+        y = 10
+        for line in inspector_lines:
+            if line:
+                # Color code
+                if "🔍" in line:
+                    color = (255, 255, 0)  # Yellow header
+                elif line.endswith(":") and not line.startswith(" "):
+                    color = (100, 200, 255)  # Cyan section headers
+                elif "POTENT" in line or "█" in line:
+                    color = (255, 100, 255)  # Magenta for drugs
+                else:
+                    color = (220, 220, 220)  # White for data
+                
+                text_surf = self.small_font.render(line, True, color)
+                panel.blit(text_surf, (10, y))
+            y += 18
+        
+        # Position panel on right side (below graph panel)
+        x_pos = self.width - 290
+        y_pos = 420  # Below the graph panel
+        surface.blit(panel, (x_pos, y_pos))
+    
+    def _render_neural_activity(self):
+        """Render neural activity visualization above creatures.
+        
+        Shows each creature's neural activity as colored particles:
+        - Excitatory neurons firing: Yellow/orange points
+        - Inhibitory neurons firing: Blue/cyan points
+        - Activity level shown by particle density and brightness
+        """
+        glDisable(GL_LIGHTING)
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE)  # Additive blending for glow effect
+        glPointSize(3.0)
+        
+        for creature in self.creatures:
+            if not hasattr(creature, 'network'):
+                continue
+            
+            network = creature.network
+            cx, cy = creature.x, creature.y
+            cz = creature.z if hasattr(creature, 'z') else 10.0
+            
+            # Visualization height above creature
+            viz_height = 30.0
+            viz_radius = 15.0
+            
+            # Count firing neurons for this frame
+            excitatory_firing = []
+            inhibitory_firing = []
+            
+            for i, neuron in enumerate(network.neurons[:min(100, len(network.neurons))]):
+                # Check if neuron fired recently (high potential)
+                if neuron.potential > neuron.threshold * 0.7:
+                    # Position in a circle above creature
+                    angle = (i / len(network.neurons)) * 2 * np.pi
+                    layer = i % 3  # Multiple layers
+                    radius = viz_radius * (0.5 + layer * 0.25)
+                    
+                    px = cx + radius * np.cos(angle)
+                    py = cy + radius * np.sin(angle)
+                    pz = cz + viz_height + layer * 5
+                    
+                    # Brightness based on potential
+                    brightness = min(1.0, neuron.potential / neuron.threshold)
+                    
+                    if neuron.is_inhibitory:
+                        inhibitory_firing.append((px, py, pz, brightness))
+                    else:
+                        excitatory_firing.append((px, py, pz, brightness))
+            
+            # Render excitatory neurons (yellow-orange)
+            if excitatory_firing:
+                glBegin(GL_POINTS)
+                for px, py, pz, brightness in excitatory_firing:
+                    glColor4f(1.0, 0.8 * brightness, 0.2 * brightness, brightness * 0.8)
+                    glVertex3f(px, py, pz)
+                glEnd()
+            
+            # Render inhibitory neurons (blue-cyan)
+            if inhibitory_firing:
+                glBegin(GL_POINTS)
+                for px, py, pz, brightness in inhibitory_firing:
+                    glColor4f(0.2 * brightness, 0.6 * brightness, 1.0, brightness * 0.8)
+                    glVertex3f(px, py, pz)
+                glEnd()
+            
+            # Draw activity ring around creature (based on overall activity)
+            activity = network.get_activity_level()
+            if activity > 0.01:
+                glBegin(GL_LINE_LOOP)
+                ring_color = (1.0, 1.0 - activity, 1.0 - activity, activity)
+                glColor4f(*ring_color)
+                for i in range(16):
+                    angle = i * 2 * np.pi / 16
+                    glVertex3f(
+                        cx + viz_radius * 1.2 * np.cos(angle),
+                        cy + viz_radius * 1.2 * np.sin(angle),
+                        cz + viz_height - 5
+                    )
+                glEnd()
+        
+        glPointSize(1.0)
+        glDisable(GL_BLEND)
+        glEnable(GL_LIGHTING)
+    
+    def _render_social_learning(self):
+        """Render social learning connections between creatures.
+        
+        Shows:
+        - Lines between creatures who have observed each other
+        - Color indicates learning success (green=successful, red=failed)
+        - Thickness indicates frequency of interaction
+        """
+        glDisable(GL_LIGHTING)
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        glLineWidth(2.0)
+        
+        # Track rendered connections to avoid duplicates
+        rendered_pairs = set()
+        
+        for creature in self.creatures:
+            if not hasattr(creature, 'learner'):
+                continue
+            
+            cx1 = creature.x
+            cy1 = creature.y
+            cz1 = creature.z if hasattr(creature, 'z') else 10.0
+            
+            # Check observation history
+            if hasattr(creature.learner, 'observation_history'):
+                for observation in creature.learner.observation_history[-5:]:  # Last 5 observations
+                    # Find the creature that was observed
+                    observed_id = observation.get('creature_id') if isinstance(observation, dict) else None
+                    if not observed_id:
+                        continue
+                    
+                    for other in self.creatures:
+                        if getattr(other, 'creature_id', None) == observed_id:
+                            # Create pair key to avoid duplicates
+                            pair_key = tuple(sorted([id(creature), id(other)]))
+                            if pair_key in rendered_pairs:
+                                continue
+                            rendered_pairs.add(pair_key)
+                            
+                            cx2 = other.x
+                            cy2 = other.y
+                            cz2 = other.z if hasattr(other, 'z') else 10.0
+                            
+                            # Line color based on success
+                            success = observation.get('success', False)
+                            if success:
+                                glColor4f(0.0, 1.0, 0.3, 0.4)  # Green for successful learning
+                            else:
+                                glColor4f(1.0, 0.5, 0.0, 0.3)  # Orange for observation
+                            
+                            # Draw connection line
+                            glBegin(GL_LINES)
+                            glVertex3f(cx1, cy1, cz1 + 5)
+                            glVertex3f(cx2, cy2, cz2 + 5)
+                            glEnd()
+            
+            # Draw awareness radius circle
+            if hasattr(creature, 'sight_range'):
+                sight_range = creature.sight_range
+            else:
+                sight_range = 100.0
+            
+            # Only draw if creature has learned behaviors
+            if hasattr(creature.learner, 'behavior_success_rates'):
+                n_behaviors = len(creature.learner.behavior_success_rates)
+                if n_behaviors > 0:
+                    # Color based on learning progress (more behaviors = more cyan)
+                    learning_progress = min(1.0, n_behaviors / 5.0)
+                    glColor4f(0.2, 0.5 + 0.5 * learning_progress, 1.0, 0.15)
+                    
+                    glBegin(GL_LINE_LOOP)
+                    for i in range(24):
+                        angle = i * 2 * np.pi / 24
+                        glVertex3f(
+                            cx1 + sight_range * 0.3 * np.cos(angle),
+                            cy1 + sight_range * 0.3 * np.sin(angle),
+                            cz1 + 2
+                        )
+                    glEnd()
+        
+        glLineWidth(1.0)
+        glDisable(GL_BLEND)
+        glEnable(GL_LIGHTING)
+    
     def _render_circuit8_ground(self):
         """Render Circuit8 as glowing ground plane."""
         glDisable(GL_DEPTH_TEST)
@@ -962,6 +1333,7 @@ class ResearchPlatform:
             "",
             "CAMERA:",
             "  Mouse drag: Rotate | Scroll: Zoom | Arrows: Pan",
+            "  Right-click: Inspect creature (detailed stats)",
             "  R: Reset camera",
             "",
             "SIMULATION:",
