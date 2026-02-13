@@ -55,6 +55,8 @@ Core systems operational:
 - ✅ Configuration profiles (save/load) (Phase 10)
 - ✅ Population management with culling (Phase 10)
 - ✅ Complete research platform UI (Phase 10)
+- ✅ Neural activity visualization Mode 2 (firing neurons + activity rings)
+- ✅ Social learning visualization Mode 7 (observation lines + learning circles)
 
 This is a working artificial life system integrating innovations from 15+ years of flamoot's research. See README.md, PHASE4_COMPLETE.md, PHASE5A_COMPLETE.md, PHASE5C_COMPLETE.md, PHASE9A_COMPLETE.md, PHASE9B_COMPLETE.md, PHASE9C_PSYCHOPHARMACOLOGY.md, PHASE10A_COMPLETE.md, and FLAMOOT_DISCOVERIES_SYNTHESIS.md for details.
 
