@@ -650,17 +650,24 @@ class ResearchPlatform:
         if self.show_thoughts:
             self._collect_thoughts()
         
-        # Switch to 2D for UI (with proper matrix state management like phase9c)
+        # Switch to 2D for UI - clear depth buffer and use fresh matrices
+        glClear(GL_DEPTH_BUFFER_BIT)  # Clear depth so 2D always renders on top
+        
         glMatrixMode(GL_PROJECTION)
         glPushMatrix()
         glLoadIdentity()
         gluOrtho2D(0, self.width, self.height, 0)
+        
         glMatrixMode(GL_MODELVIEW)
         glPushMatrix()
         glLoadIdentity()
         
         glDisable(GL_DEPTH_TEST)
+        glDepthMask(GL_FALSE)  # Disable depth writes
         glDisable(GL_LIGHTING)
+        glDisable(GL_CULL_FACE)  # CRITICAL: Disable backface culling for 2D
+        glDisable(GL_TEXTURE_2D)  # Ensure no textures bound
+        glBindTexture(GL_TEXTURE_2D, 0)  # Unbind any texture
         
         # Create pygame surface for UI
         ui_surface = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
@@ -710,7 +717,9 @@ class ResearchPlatform:
         self._blit_pygame_to_opengl(ui_surface)
         
         # Restore 3D state (pop matrices from earlier push)
+        glDepthMask(GL_TRUE)  # Re-enable depth writes
         glEnable(GL_DEPTH_TEST)
+        glEnable(GL_CULL_FACE)  # Re-enable backface culling for 3D
         glMatrixMode(GL_PROJECTION)
         glPopMatrix()
         glMatrixMode(GL_MODELVIEW)
