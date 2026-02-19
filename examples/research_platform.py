@@ -796,6 +796,14 @@ class ResearchPlatform:
             scale = creature.get_render_scale() if hasattr(creature, 'get_render_scale') else 1.0
             glScalef(scale, scale, scale)
             
+            # Species-colored tinting
+            cid = getattr(creature, 'creature_id', None)
+            if cid and cid in self.species_tracker.creature_species:
+                sid = self.species_tracker.creature_species[cid]
+                if sid in self.species_tracker.species:
+                    sc = self.species_tracker.species[sid].color
+                    glColor4f(sc[0]/255.0, sc[1]/255.0, sc[2]/255.0, 1.0)
+            
             # Base body scale
             body_scale = 5.0
             glScalef(body_scale, body_scale, body_scale)
@@ -804,6 +812,40 @@ class ResearchPlatform:
             creature.mesh.render()
             
             glPopMatrix()
+        
+        # Selection ring around selected creature
+        if self.selected_creature and self.selected_creature in self.creatures:
+            sc = self.selected_creature
+            glDisable(GL_LIGHTING)
+            glLineWidth(2.0)
+            glColor4f(1.0, 1.0, 0.0, 0.9)  # Bright yellow ring
+            glBegin(GL_LINE_LOOP)
+            for i in range(24):
+                angle = i * 2 * np.pi / 24
+                glVertex3f(
+                    sc.x + 12.0 * np.cos(angle),
+                    sc.y + 12.0 * np.sin(angle),
+                    11.0
+                )
+            glEnd()
+            glLineWidth(1.0)
+            glEnable(GL_LIGHTING)
+        
+        # Seeking lines: show what creatures are targeting
+        glDisable(GL_LIGHTING)
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        for creature in self.creatures:
+            if hasattr(creature, 'target_resource') and creature.target_resource is not None:
+                tr = creature.target_resource
+                if tr.active:
+                    glColor4f(0.3, 1.0, 0.3, 0.25)  # Faint green line
+                    glBegin(GL_LINES)
+                    glVertex3f(creature.x, creature.y, 10.0)
+                    glVertex3f(tr.x, tr.y, tr.z + tr.radius)
+                    glEnd()
+        glDisable(GL_BLEND)
+        glEnable(GL_LIGHTING)
         
         # Render velocity vectors
         if self.render_mode in [5, 8]:  # Physics debug mode
@@ -2065,9 +2107,9 @@ class ResearchPlatform:
         panel_width = 250
         panel_height = len(stats_lines) * 14 + 12
         
-        # Position below Circuit8 panel
+        # Position top-center (free space since Circuit8 moved to bottom-right)
         panel_x = (self.width - panel_width) // 2
-        panel_y = 235  # Below Circuit8 (which is ~210px from top)
+        panel_y = 10
         
         panel = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
         panel.fill((10, 15, 25, 200))
