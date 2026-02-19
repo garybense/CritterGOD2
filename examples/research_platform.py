@@ -687,6 +687,7 @@ class ResearchPlatform:
                     if not btn_clicked:
                         self.mouse_dragging = True
                         self.last_mouse_x, self.last_mouse_y = event.pos
+                        self._click_start_pos = event.pos  # Track for click-vs-drag
                 elif event.button == 3:  # Right click - inspect creature
                     self._try_inspect_creature(event.pos)
                 # Scroll wheel (some pygame versions use button 4/5)
@@ -697,6 +698,13 @@ class ResearchPlatform:
             elif event.type == MOUSEBUTTONUP:
                 if event.button == 1:
                     self.mouse_dragging = False
+                    # If mouse didn't move much, treat as click → select creature
+                    if hasattr(self, '_click_start_pos') and self._click_start_pos:
+                        dx = abs(event.pos[0] - self._click_start_pos[0])
+                        dy = abs(event.pos[1] - self._click_start_pos[1])
+                        if dx < 5 and dy < 5:
+                            self._try_inspect_creature(event.pos)
+                    self._click_start_pos = None
             elif event.type == MOUSEMOTION:
                 if self.mouse_dragging:
                     dx = event.pos[0] - self.last_mouse_x
@@ -1137,66 +1145,62 @@ class ResearchPlatform:
             pass
     
     def _try_inspect_creature(self, mouse_pos):
-        """Try to pick and inspect a creature at mouse position."""
-        # Get ray from mouse position
-        ray_origin, ray_dir = self._get_ray_from_mouse(mouse_pos)
+        """Try to pick and inspect a creature at mouse position.
         
-        # Find closest creature hit
+        Uses screen-space projection: project each creature's world position
+        to screen coordinates and find the nearest one to the click.
+        More robust than ray casting (doesn't depend on GL matrix state).
+        """
         closest_creature = None
-        closest_dist = float('inf')
+        closest_screen_dist = 60.0  # Max pixel distance for picking
+        
+        # Get current OpenGL matrices for projection
+        try:
+            viewport = glGetIntegerv(GL_VIEWPORT)
+            modelview = glGetDoublev(GL_MODELVIEW_MATRIX)
+            projection = glGetDoublev(GL_PROJECTION_MATRIX)
+        except Exception:
+            return
+        
+        mx, my = mouse_pos
         
         for creature in self.creatures:
-            # Simple sphere intersection test
-            pos = np.array([creature.x, creature.y, creature.z if hasattr(creature, 'z') else 10.0])
-            radius = 15.0  # Approximate creature radius for picking
+            # Project creature world position to screen space
+            cz = 10.0  # Match render height
+            try:
+                screen_pos = gluProject(
+                    creature.x, creature.y, cz,
+                    modelview, projection, viewport
+                )
+                if screen_pos is None:
+                    continue
+                sx, sy, sz = screen_pos
+                # gluProject returns Y from bottom; pygame Y is from top
+                sy = viewport[3] - sy
+            except Exception:
+                continue
             
-            # Ray-sphere intersection
-            oc = ray_origin - pos
-            b = 2.0 * np.dot(oc, ray_dir)
-            c = np.dot(oc, oc) - radius * radius
-            discriminant = b*b - 4*c
+            # 2D screen distance
+            dx = mx - sx
+            dy = my - sy
+            dist = (dx * dx + dy * dy) ** 0.5
             
-            if discriminant >= 0:
-                t = (-b - np.sqrt(discriminant)) / 2.0
-                if 0 < t < closest_dist:
-                    closest_dist = t
-                    closest_creature = creature
+            if dist < closest_screen_dist:
+                closest_screen_dist = dist
+                closest_creature = creature
         
         # Toggle inspection
         if closest_creature:
             if self.selected_creature == closest_creature:
-                self.selected_creature = None  # Close inspector
+                self.selected_creature = None
                 self.console.add_line("🔍 Inspector closed")
             else:
                 self.selected_creature = closest_creature
                 self.console.add_line(f"🔍 Inspecting creature {closest_creature.creature_id}")
         else:
-            # Clicked on nothing - close inspector
             if self.selected_creature:
                 self.selected_creature = None
                 self.console.add_line("🔍 Inspector closed")
-    
-    def _get_ray_from_mouse(self, mouse_pos):
-        """Get ray from mouse position in 3D space."""
-        # Get viewport and matrices
-        viewport = glGetIntegerv(GL_VIEWPORT)
-        modelview = glGetDoublev(GL_MODELVIEW_MATRIX)
-        projection = glGetDoublev(GL_PROJECTION_MATRIX)
-        
-        # Mouse Y is inverted
-        win_x = float(mouse_pos[0])
-        win_y = float(viewport[3] - mouse_pos[1])
-        
-        # Unproject near and far points
-        near_pt = gluUnProject(win_x, win_y, 0.0, modelview, projection, viewport)
-        far_pt = gluUnProject(win_x, win_y, 1.0, modelview, projection, viewport)
-        
-        # Create ray
-        ray_origin = np.array(near_pt, dtype=np.float32)
-        ray_dir = np.array(far_pt, dtype=np.float32) - ray_origin
-        ray_dir = ray_dir / np.linalg.norm(ray_dir)
-        
-        return ray_origin, ray_dir
     
     def _render_inspector_panel(self, surface):
         """Render creature inspector panel on the right side of screen."""
