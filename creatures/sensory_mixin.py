@@ -229,19 +229,16 @@ class CompleteSensoryMixin:
             idx += 1
     
     def _sense_vision(self):
-        """Read visual environment through retinal array."""
-        if not hasattr(self, 'circuit8'):
+        """Read visual environment through retinal array.
+        
+        Performance: self.circuit8.screen IS already [height, width, 3] uint8.
+        Pass it directly — no pixel-by-pixel copy needed.
+        """
+        if not hasattr(self, 'circuit8') or self.circuit8 is None:
             return
         
-        # Convert Circuit8 to screen format
-        screen = np.zeros((self.circuit8.height, self.circuit8.width, 3), dtype=np.uint8)
-        for y in range(self.circuit8.height):
-            for x in range(self.circuit8.width):
-                r, g, b = self.circuit8.read_pixel(x, y)
-                screen[y, x] = [r, g, b]
-        
-        # Read through retinal sensors
-        self.visual_input = self.retinal_array.read_screen(screen)
+        # Pass the screen array directly (it's already [h, w, 3] uint8)
+        self.visual_input = self.retinal_array.read_screen(self.circuit8.screen)
     
     def _sense_proprioception(self):
         """Sense body state."""
@@ -409,8 +406,7 @@ class CompleteSensoryMixin:
         
         px = int(self.pen_x) % self.circuit8.width
         py = int(self.pen_y) % self.circuit8.height
-        r, g, b = self.circuit8.read_pixel(px, py)
-        return np.array([r, g, b], dtype=np.float32)
+        return self.circuit8.screen[py, px].astype(np.float32)
     
     def get_visual_focus(self) -> Optional[tuple]:
         """

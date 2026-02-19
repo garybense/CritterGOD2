@@ -83,6 +83,36 @@ class Circuit8:
         y = max(0, min(self.height - 1, y))
         
         return tuple(self.screen[y, x])
+    
+    def read_pixel_array(self, x: int, y: int) -> np.ndarray:
+        """
+        Read RGB values at position as numpy array (no tuple allocation).
+        
+        Args:
+            x: X coordinate (0-63)
+            y: Y coordinate (0-47)
+            
+        Returns:
+            numpy array [R, G, B]
+        """
+        x = max(0, min(self.width - 1, x))
+        y = max(0, min(self.height - 1, y))
+        return self.screen[y, x]
+    
+    def read_pixels_batch(self, xs: np.ndarray, ys: np.ndarray) -> np.ndarray:
+        """
+        Batch read RGB values at multiple positions (vectorized).
+        
+        Args:
+            xs: Array of X coordinates
+            ys: Array of Y coordinates
+            
+        Returns:
+            Array of shape (N, 3) with RGB values
+        """
+        xs = np.clip(xs, 0, self.width - 1)
+        ys = np.clip(ys, 0, self.height - 1)
+        return self.screen[ys, xs]
         
     def write_pixel(self, x: int, y: int, r: int, g: int, b: int, blend: bool = True):
         """

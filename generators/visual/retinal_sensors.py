@@ -69,27 +69,13 @@ class RetinalSensor:
             Activation values for each neuron (shape: num_neurons)
         """
         height, width = screen.shape[:2]
-        
-        # Clamp x position to screen bounds
         x = max(0, min(width - 1, self.x_position))
         
-        # Sample pixels at neuron positions
-        activations = np.zeros(self.num_neurons)
-        for i, y in enumerate(self.sample_positions):
-            if 0 <= y < height:
-                # Get RGB pixel
-                rgb = screen[y, x]
-                
-                # Convert to brightness (activation)
-                # Heritage: brightness = (R + G + B) / 3
-                brightness = np.mean(rgb)
-                
-                # Map brightness (0-255) to activation potential (0-1000)
-                # Heritage range: neurons have potentials 0-5000
-                activation = (brightness / 255.0) * 1000.0
-                
-                activations[i] = activation
-        
+        # Vectorized: sample all Y positions at once, compute brightness
+        ys = np.clip(self.sample_positions, 0, height - 1)
+        pixels = screen[ys, x]  # Shape: (num_neurons, 3)
+        # brightness = (R + G + B) / 3, mapped to 0-1000
+        activations = pixels.astype(np.float32).sum(axis=1) * (1000.0 / (255.0 * 3.0))
         return activations
 
 
@@ -140,13 +126,28 @@ class RetinalArray:
                 num_neurons=neurons_per_sensor
             )
             self.sensors.append(sensor)
+        
+        # Precompute batch coordinate arrays for vectorized read_screen()
+        # All sensor positions as flat arrays: one (x,y) per neuron
+        total_neurons = num_sensors * neurons_per_sensor
+        self._batch_xs = np.zeros(total_neurons, dtype=np.intp)
+        self._batch_ys = np.zeros(total_neurons, dtype=np.intp)
+        idx = 0
+        for sensor in self.sensors:
+            n = sensor.num_neurons
+            self._batch_xs[idx:idx+n] = sensor.x_position
+            self._batch_ys[idx:idx+n] = sensor.sample_positions
+            idx += n
     
     def read_screen(self, screen: np.ndarray) -> np.ndarray:
         """
-        Read entire screen through all sensors.
+        Read entire screen through all sensors (vectorized).
         
         Returns activations for all sensory neurons as flat array.
         Heritage: 100 sensors × 50 neurons = 5000 total activations.
+        
+        Uses batch numpy indexing to sample all sensor positions at once,
+        avoiding per-sensor Python loops.
         
         Args:
             screen: RGB screen array of shape (height, width, 3)
@@ -155,13 +156,20 @@ class RetinalArray:
             Flat array of all activation values
             Shape: (num_sensors * neurons_per_sensor,)
         """
-        all_activations = []
+        # Use precomputed coordinate arrays for single vectorized read
+        if hasattr(self, '_batch_ys') and self._batch_ys is not None:
+            height, width = screen.shape[:2]
+            xs = np.clip(self._batch_xs, 0, width - 1)
+            ys = np.clip(self._batch_ys, 0, height - 1)
+            pixels = screen[ys, xs]  # Shape: (total_neurons, 3)
+            activations = pixels.astype(np.float32).sum(axis=1) * (1000.0 / (255.0 * 3.0))
+            return activations
         
+        # Fallback: per-sensor (shouldn't happen after __init__)
+        all_activations = []
         for sensor in self.sensors:
             activations = sensor.read_column(screen)
             all_activations.append(activations)
-        
-        # Concatenate into flat array
         return np.concatenate(all_activations)
     
     def get_total_neurons(self) -> int:
