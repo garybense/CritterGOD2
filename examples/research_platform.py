@@ -876,6 +876,9 @@ class ResearchPlatform:
         if self.show_thoughts and hasattr(self, '_thoughts_to_render'):
             self._render_thought_bubbles(ui_surface)
         
+        # Render mouseover tooltip
+        self._render_tooltip(ui_surface)
+        
         # Render brain visualization (if enabled and creature selected)
         if self.show_brain_view and self.selected_creature:
             self._render_brain_view(ui_surface)
@@ -1525,6 +1528,79 @@ class ResearchPlatform:
         glDisable(GL_BLEND)
         glEnable(GL_LIGHTING)
     
+    def _render_tooltip(self, surface):
+        """Render mouseover tooltip for objects under the cursor."""
+        mx, my = pygame.mouse.get_pos()
+        
+        # Don't show tooltip over UI panels
+        if mx < 300 or mx > self.width - 300:
+            return
+        
+        try:
+            viewport = glGetIntegerv(GL_VIEWPORT)
+            modelview = glGetDoublev(GL_MODELVIEW_MATRIX)
+            projection = glGetDoublev(GL_PROJECTION_MATRIX)
+        except Exception:
+            return
+        
+        best_label = None
+        best_dist = 45.0  # Max pixel distance for tooltip
+        
+        # Check creatures
+        for creature in self.creatures:
+            try:
+                sx, sy, sz = gluProject(
+                    creature.x, creature.y, 10.0,
+                    modelview, projection, viewport
+                )
+                sy = viewport[3] - sy
+                dist = ((mx - sx)**2 + (my - sy)**2) ** 0.5
+                if dist < best_dist:
+                    best_dist = dist
+                    cid = getattr(creature, 'creature_id', '?')
+                    energy_pct = int(creature.energy.energy / creature.energy.max_energy * 100)
+                    gen = getattr(creature, 'generation', 0)
+                    best_label = f"Creature {cid}  gen:{gen}  energy:{energy_pct}%"
+            except Exception:
+                continue
+        
+        # Check resources
+        for resource in self.resource_manager.resources:
+            if not resource.active:
+                continue
+            try:
+                sx, sy, sz = gluProject(
+                    resource.x, resource.y, resource.z + resource.radius,
+                    modelview, projection, viewport
+                )
+                sy = viewport[3] - sy
+                dist = ((mx - sx)**2 + (my - sy)**2) ** 0.5
+                if dist < best_dist:
+                    best_dist = dist
+                    from core.resources.resource import ResourceType
+                    if resource.resource_type == ResourceType.FOOD:
+                        best_label = f"Food  energy:{resource.energy_value:.0f}"
+                    elif resource.resource_type == ResourceType.DRUG_MUSHROOM:
+                        drug_names = ["Inh.Antag", "Inh.Agon", "Exc.Antag", "Exc.Agon", "Potent."]
+                        mol = int(resource.molecule_type) if resource.molecule_type is not None else 0
+                        best_label = f"Drug: {drug_names[mol]}"
+                    else:
+                        best_label = "Resource"
+            except Exception:
+                continue
+        
+        # Render tooltip
+        if best_label:
+            text_surf = self.small_font.render(best_label, True, (255, 255, 255))
+            tw, th = text_surf.get_width() + 8, text_surf.get_height() + 4
+            tx = min(mx + 12, self.width - tw - 4)
+            ty = max(my - th - 4, 4)
+            bg = pygame.Surface((tw, th), pygame.SRCALPHA)
+            bg.fill((10, 10, 30, 210))
+            pygame.draw.rect(bg, (120, 160, 220), (0, 0, tw, th), 1)
+            surface.blit(bg, (tx, ty))
+            surface.blit(text_surf, (tx + 4, ty + 2))
+    
     def _render_circuit8_panel(self, surface):
         """Render Circuit8 as a 2D UI panel (telepathic canvas monitor).
         
@@ -1532,12 +1608,12 @@ class ResearchPlatform:
         separate from the 3D world. This is the shared morphic field that
         all creatures read/write to.
         """
-        # Panel dimensions and position (top center, between config and graph panels)
-        panel_scale = 4  # 64*4=256 wide, 48*4=192 tall
+        # Panel dimensions and position (bottom-right corner)
+        panel_scale = 3  # 64*3=192 wide, 48*3=144 tall (compact)
         panel_w = self.circuit8.width * panel_scale
         panel_h = self.circuit8.height * panel_scale
-        panel_x = (self.width - panel_w) // 2
-        panel_y = 10  # Top of screen
+        panel_x = self.width - panel_w - 20
+        panel_y = self.height - panel_h - 40
         
         # Background
         bg = pygame.Surface((panel_w + 8, panel_h + 28), pygame.SRCALPHA)
@@ -1630,21 +1706,38 @@ class ResearchPlatform:
                     })
     
     def _render_thought_bubbles(self, surface):
-        """Render thought bubbles in 2D."""
-        # Simple approach: render text near creature positions
-        for i, creature in enumerate(self.creatures[:10]):  # Limit to 10
+        """Render thought bubbles in 2D, projected from world-space."""
+        try:
+            viewport = glGetIntegerv(GL_VIEWPORT)
+            modelview = glGetDoublev(GL_MODELVIEW_MATRIX)
+            projection = glGetDoublev(GL_PROJECTION_MATRIX)
+        except Exception:
+            return
+        
+        for i, creature in enumerate(self.creatures[:10]):
             if hasattr(creature, 'get_current_thought'):
                 thought = creature.get_current_thought()
                 if thought and len(thought.strip()) > 0:
-                    # Truncate long thoughts
                     text = thought[:30]
                     if len(thought) > 30:
                         text += "..."
                     
-                    # Render at creature position (approximate)
+                    # Project creature world position to screen space
+                    try:
+                        sx, sy, sz = gluProject(
+                            creature.x, creature.y, 30.0,  # Above creature head
+                            modelview, projection, viewport
+                        )
+                        sy = viewport[3] - sy  # Flip Y
+                    except Exception:
+                        continue
+                    
+                    # Skip if off screen
+                    if sx < 0 or sx > self.width or sy < 0 or sy > self.height:
+                        continue
+                    
+                    x, y = int(sx), int(sy)
                     text_surf = self.small_font.render(text, True, (255, 255, 100))
-                    x = int(self.width / 2 + creature.x)
-                    y = int(self.height / 2 - creature.y - 20)
                     
                     # Background
                     bg = pygame.Surface((text_surf.get_width() + 4, text_surf.get_height() + 2))

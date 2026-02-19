@@ -80,7 +80,7 @@ class BehavioralCreature(MorphologicalCreature):
         
         # Movement parameters
         self.movement_speed = 2.0  # Units per timestep
-        self.detection_range = 100.0  # How far creature can sense resources
+        self.detection_range = 250.0  # How far creature can sense resources (half world size)
     
     def update(self, dt: float = 1.0, resource_manager: Optional[ResourceManager] = None) -> bool:
         """
@@ -134,8 +134,11 @@ class BehavioralCreature(MorphologicalCreature):
                 
                 # If physics is active, apply force instead of direct position modification
                 if hasattr(self, 'rigid_body') and self.rigid_body is not None:
-                    # Apply gentle force toward target through physics
-                    force = np.array([dx * 2.0, dy * 2.0, 0.0], dtype=np.float32)
+                    # Apply strong seeking force toward target
+                    # Scale with hunger urgency: starving creatures move faster
+                    urgency = 1.0 + max(0, (self.behavior.hunger_threshold - self.energy.energy) / self.behavior.hunger_threshold) * 3.0
+                    seek_force = 8.0 * urgency
+                    force = np.array([dx * seek_force, dy * seek_force, 0.0], dtype=np.float32)
                     self.rigid_body.apply_force(force)
                 else:
                     # No physics - move directly (fallback)
