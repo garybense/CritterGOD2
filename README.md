@@ -122,17 +122,19 @@ CritterGOD synthesizes concepts from:
 
 ## Status
 
-✅ **Phase 9c COMPLETE** - Collective Intelligence Operational!
+✅ **Phase 11 COMPLETE** - Real Evolution: Neural Networks Wired to Survival!
 
 ### Complete Artificial Life Ecosystem
 
 **The system now integrates ALL major components into working creatures that:**
 - Think with spiking neural networks
-- Move with custom physics engines
-- Evolve morphologically across generations
-- Seek food and drugs based on needs
+- Move using ONLY neural motor outputs (no hardcoded behavior)
+- Evolve morphologically AND behaviorally across generations
+- Sense food direction via 6 dedicated sensory neurons
+- Natural selection: survivors breed, failures die
+- Auto-breed from fittest preserves evolved lineages
+- Body mass creates morphological selection pressure
 - Share knowledge through telepathic canvas
-- Learn socially from each other's experiences
 - Build collective memory that outlives individuals
 
 ### Implementation Progress
@@ -189,12 +191,20 @@ CritterGOD synthesizes concepts from:
 - Neural motor control → forces
 - 60 FPS with 190+ bodies
 
-**Phase 9c: Collective Intelligence** ✅ **NEW!**
+**Phase 9c: Collective Intelligence** ✅
 - Behavior broadcasting to Circuit8
 - Resource location marking (food/drugs)
 - Social learning from observations
 - Collective memory (resources + danger zones)
 - Emergent cooperation patterns
+
+**Phase 11: Real Evolution** ✅ **NEW!**
+- Food-direction sensory neurons (4 compass + distance + urgency)
+- Hardcoded behavioral seeking REMOVED — neural motors only
+- Natural selection acts on neural networks (survival = fitness)
+- Auto-breed from fittest survivor (preserves evolved lineages)
+- Body mass affects energy drain (morphological selection pressure)
+- Generation tracking visible in stats overlay
 
 ## Revolutionary Innovations
 

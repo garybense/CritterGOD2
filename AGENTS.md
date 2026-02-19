@@ -4,6 +4,8 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 ## Project Status
 
+**Phase 11 COMPLETE** - Real evolution: neural networks wired to survival!
+
 **Phase 10b COMPLETE** - GPU acceleration for 10,000+ neuron networks!
 **Phase 10 COMPLETE** - Research platform with configuration UI and statistics!
 **Phase 9d COMPLETE** - Complete sensory-motor integration for emergent behaviors!
@@ -62,6 +64,12 @@ Core systems operational:
 - ✅ Multi-backend support: CUDA, OpenCL, NumPy (Phase 10b)
 - ✅ Vectorized SoA neural network for 10k+ neurons (Phase 10b)
 - ✅ Semantic morphic field channels (pheromone trails, danger zones)
+- ✅ Food-direction sensory neurons (4 compass + distance + urgency, Phase 11)
+- ✅ Neural-only motor control (hardcoded seeking removed, Phase 11)
+- ✅ Natural selection on neural networks (survival = fitness, Phase 11)
+- ✅ Auto-breed from fittest survivor (preserves evolved lineages, Phase 11)
+- ✅ Body mass affects energy drain (morphological selection pressure, Phase 11)
+- ✅ Generation tracking with stats overlay (Phase 11)
 
 This is a working artificial life system integrating innovations from 15+ years of flamoot's research. See README.md, PHASE4_COMPLETE.md, PHASE5A_COMPLETE.md, PHASE5C_COMPLETE.md, PHASE9A_COMPLETE.md, PHASE9B_COMPLETE.md, PHASE9C_PSYCHOPHARMACOLOGY.md, PHASE10A_COMPLETE.md, and FLAMOOT_DISCOVERIES_SYNTHESIS.md for details.
 
