@@ -102,12 +102,15 @@ class GeneticDistance:
         body1 = creature1.body
         body2 = creature2.body
         
+        if body1 is None or body2 is None:
+            return 0.0
+        
         # Segment count difference
-        seg_diff = abs(body1.num_segments - body2.num_segments) / 10.0
+        seg_diff = abs(len(body1.segments) - len(body2.segments)) / 10.0
         
         # Total limb count difference
-        limb1 = sum(body1.limbs_per_segment)
-        limb2 = sum(body2.limbs_per_segment)
+        limb1 = sum(len(s.limbs) for s in body1.segments)
+        limb2 = sum(len(s.limbs) for s in body2.segments)
         limb_diff = abs(limb1 - limb2) / 20.0
         
         # Size differences
