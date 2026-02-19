@@ -16,7 +16,12 @@ from core.evolution.phenotype import build_network_from_genotype
 from core.pharmacology.drugs import DrugSystem, Pill
 from core.energy.metabolism import EnergySystem, Food
 from core.morphic.circuit8 import Circuit8
-from core.morphic.morphic_field import MorphicChannel
+from core.morphic.morphic_field import (
+    MorphicChannel,
+    FieldType,
+    MorphicFieldReader,
+    MorphicFieldWriter,
+)
 
 
 class Creature:
@@ -73,6 +78,17 @@ class Creature:
         self.circuit8 = circuit8
         self.morphic_channel = np.random.randint(0, 6)  # Random channel 0-5
         
+        # Semantic field reader/writer (for pheromone trails, danger zones, etc.)
+        if circuit8 is not None:
+            self.field_reader = MorphicFieldReader(circuit8)
+            self.field_writer = MorphicFieldWriter(circuit8)
+        else:
+            self.field_reader = None
+            self.field_writer = None
+        
+        # Field sensing state (updated each tick)
+        self.sensed_fields = {}  # FieldType -> intensity
+        
         # Motor outputs (to be read by physics/rendering)
         self.motor_outputs = np.zeros(8)  # 8 motors
         
@@ -109,6 +125,10 @@ class Creature:
         # Age
         self.age += 1
         
+        # === SEMANTIC FIELD SENSING ===
+        # Read pheromone trails, danger zones, etc. before neural processing
+        self.sense_morphic_fields()
+        
         # === COMPLETE SENSORY INTEGRATION (if mixin present) ===
         # This reads ALL senses: vision, proprioception, interoception, chemoreception
         # Call BEFORE neural network processes
@@ -136,8 +156,8 @@ class Creature:
                 if neuron.neuron_type == NeuronType.SENSORY:
                     neuron.add_input(morphic_input + noise)
                 elif neuron.neuron_type == NeuronType.MOTOR:
-                    # Tonic motor drive to encourage spontaneous activity
-                    neuron.add_input(np.random.uniform(800.0, 1600.0))
+                    # Reduced tonic motor drive for more deliberate movement
+                    neuron.add_input(np.random.uniform(100.0, 300.0))
         
         # Update neural network (with drug modulation of plasticity!)
         self.network.update(drug_system=self.drugs)
@@ -158,31 +178,47 @@ class Creature:
         if num_neurons >= 8:
             for i in range(8):
                 neuron_idx = num_neurons - 8 + i
-                self.motor_outputs[i] = self.network.neurons[neuron_idx].potential
+                neuron = self.network.neurons[neuron_idx]
+                # Normalize potential to [0, 1] range based on threshold
+                # Typical neuron threshold is 700-8700, use average of 4700
+                normalized = np.clip(neuron.potential / 4700.0, 0.0, 1.0)
+                self.motor_outputs[i] = normalized
                 
         # Extract screen motors (if condensed_colourmotors)
         # Assume 6 neurons before regular motors are screen motors
+        # Normalize to [-1, 1] centered around threshold so channels are balanced
         if num_neurons >= 14:
             for i in range(6):
                 neuron_idx = num_neurons - 14 + i
-                self.screen_motors[i] = self.network.neurons[neuron_idx].potential
+                neuron = self.network.neurons[neuron_idx]
+                # Center around threshold: fired = positive output, resting = negative
+                self.screen_motors[i] = (neuron.potential - neuron.threshold) / neuron.threshold
                 
         # Write to Circuit8 based on screen motors
         if self.circuit8 is not None:
             pixel_x = int(self.x) % self.circuit8.width
             pixel_y = int(self.y) % self.circuit8.height
             
-            # RuRdGuGdBuBd control
+            # RuRdGuGdBuBd control — now centered around 0
             r_change = self.screen_motors[0] - self.screen_motors[1]  # Ru - Rd
             g_change = self.screen_motors[2] - self.screen_motors[3]  # Gu - Gd
             b_change = self.screen_motors[4] - self.screen_motors[5]  # Bu - Bd
             
-            current_r, current_g, current_b = self.circuit8.read_pixel(pixel_x, pixel_y)
-            new_r = np.clip(current_r + r_change * 0.1, 0, 255)
-            new_g = np.clip(current_g + g_change * 0.1, 0, 255)
-            new_b = np.clip(current_b + b_change * 0.1, 0, 255)
+            # Drug amplification: tripping creatures write brighter patterns
+            drug_amp = 1.0
+            if hasattr(self, 'drugs'):
+                trip_level = np.sum(self.drugs.tripping) / max(1.0, self.drugs.max_trip)
+                drug_amp = 1.0 + trip_level * 5.0
             
-            self.circuit8.write_pixel(pixel_x, pixel_y, int(new_r), int(new_g), int(new_b))
+            # Scale factor: balanced channels with moderate write strength
+            scale = 10.0 * drug_amp
+            
+            current_r, current_g, current_b = self.circuit8.read_pixel(pixel_x, pixel_y)
+            new_r = np.clip(current_r + r_change * scale, 0, 255)
+            new_g = np.clip(current_g + g_change * scale, 0, 255)
+            new_b = np.clip(current_b + b_change * scale, 0, 255)
+            
+            self.circuit8.write_pixel(pixel_x, pixel_y, int(new_r), int(new_g), int(new_b), blend=False)
             
         # Collective voting (simplified: based on motor outputs)
         self.vote_dx = int(np.sign(self.motor_outputs[0] - self.motor_outputs[1]))
@@ -221,12 +257,28 @@ class Creature:
         # Update fitness (energy-based selection pressure)
         self.calculate_fitness()
         
+        # === AUTOMATIC FIELD EMISSIONS ===
+        # Emit danger when dying (low energy)
+        if self.energy.get_energy_fraction() < 0.1:
+            self.emit_danger_signal(intensity=0.5 + 0.5 * (1.0 - self.energy.get_energy_fraction() / 0.1))
+        
+        # Emit mating signal when ready to reproduce
+        if self.can_reproduce():
+            self.emit_mating_signal(intensity=0.6)
+        
+        # Emit excitement when neural activity is high
+        activity = self.network.get_activity_level()
+        if activity > 0.5:
+            self.emit_excitement(intensity=activity * 0.7)
+        
         return alive
         
     def eat_food(self, food: Food):
-        """Consume food."""
+        """Consume food and emit food trail for others."""
         self.energy.consume_food(food)
         self.food_consumed += 1
+        # Emit food trail pheromone so others can find food
+        self.emit_food_trail(intensity=0.8)
         
     def consume_pill(self, pill: Pill):
         """Consume pill (drugs + energy)."""
@@ -273,6 +325,9 @@ class Creature:
             adam_distance=self.adam_distance + 1  # Increment generational depth
         )
         offspring.generation = self.generation + 1
+        
+        # Emit excitement when reproducing
+        self.emit_excitement(intensity=1.0)
         
         return offspring
         
@@ -383,3 +438,100 @@ class Creature:
             f"Creature(age={self.age}, gen={self.generation}, adam={self.adam_distance}, "
             f"energy={self.energy.energy:.0f}, neurons={len(self.network.neurons)})"
         )
+    
+    # =========================
+    # SEMANTIC FIELD METHODS
+    # =========================
+    
+    def sense_morphic_fields(self):
+        """
+        Read all semantic field types at current position.
+        
+        Updates self.sensed_fields with current field intensities.
+        Called automatically during update() before neural processing.
+        """
+        if self.field_reader is None:
+            return
+        
+        x = int(self.x)
+        y = int(self.y)
+        self.sensed_fields = self.field_reader.read_all_fields_at(x, y)
+    
+    def sense_field(self, field_type: FieldType) -> float:
+        """
+        Get intensity of a specific field type at current position.
+        
+        Args:
+            field_type: Type of field to sense
+            
+        Returns:
+            Field intensity (0.0 to 1.0)
+        """
+        if self.field_reader is None:
+            return 0.0
+        return self.field_reader.read_field_at(int(self.x), int(self.y), field_type)
+    
+    def get_field_gradient(self, field_type: FieldType) -> Tuple[float, float]:
+        """
+        Get direction toward strongest signal of a field type.
+        
+        Args:
+            field_type: Field to follow (e.g., FOOD_TRAIL)
+            
+        Returns:
+            (dx, dy) normalized direction vector
+        """
+        if self.field_reader is None:
+            return (0.0, 0.0)
+        return self.field_reader.get_field_gradient(int(self.x), int(self.y), field_type)
+    
+    def emit_food_trail(self, intensity: float = 0.8):
+        """
+        Emit food trail pheromone at current position.
+        Called when creature finds food.
+        """
+        if self.field_writer is not None:
+            self.field_writer.mark_food_found(int(self.x), int(self.y), intensity)
+    
+    def emit_danger_signal(self, intensity: float = 1.0):
+        """
+        Emit danger warning at current position.
+        Called when creature is dying or under threat.
+        """
+        if self.field_writer is not None:
+            self.field_writer.mark_danger(int(self.x), int(self.y), intensity)
+    
+    def emit_mating_signal(self, intensity: float = 0.6):
+        """
+        Emit mating readiness signal.
+        Called when creature is ready to reproduce.
+        """
+        if self.field_writer is not None:
+            self.field_writer.mark_mating_ready(int(self.x), int(self.y), intensity)
+    
+    def emit_territory_marker(self, intensity: float = 0.5):
+        """
+        Mark current position as territory.
+        """
+        if self.field_writer is not None:
+            self.field_writer.mark_territory(int(self.x), int(self.y), intensity)
+    
+    def emit_excitement(self, intensity: float = 0.7):
+        """
+        Emit excitement/interest signal.
+        Called when something interesting happens.
+        """
+        if self.field_writer is not None:
+            self.field_writer.mark_excitement(int(self.x), int(self.y), intensity)
+    
+    def get_sensed_fields_summary(self) -> dict:
+        """
+        Get summary of all sensed fields for debug/UI.
+        
+        Returns:
+            Dictionary with field names and intensities
+        """
+        return {
+            ft.name: self.sensed_fields.get(ft, 0.0)
+            for ft in FieldType
+        }

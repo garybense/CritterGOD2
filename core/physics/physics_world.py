@@ -343,8 +343,10 @@ class PhysicsWorld:
             # Collision with ground
             penetration = ground_z - body.position[2]
             body.position[2] = ground_z
+            # CRITICAL: also update prev_position to prevent Verlet velocity spike
+            body.prev_position[2] = ground_z
             
-            # Get velocity
+            # Get velocity (now correctly near-zero after fixing prev_position)
             velocity = body.get_velocity(dt)
             
             # Apply restitution (bounce)

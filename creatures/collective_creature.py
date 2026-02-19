@@ -339,7 +339,7 @@ class CollectiveCreature(PhysicsCreature, PsychedelicVisionMixin, CompleteSensor
                     if offset[0] != 0 or offset[1] != 0:
                         away_dir = np.array([-offset[0], -offset[1], 0], dtype=np.float32)
                         away_dir = away_dir / np.linalg.norm(away_dir)
-                        self.apply_impulse(away_dir * 200.0)
+                        self.apply_impulse(away_dir * 2.0)
     
     def check_resource_markers(self):
         """Check for resource markers on Circuit8."""
@@ -370,7 +370,7 @@ class CollectiveCreature(PhysicsCreature, PsychedelicVisionMixin, CompleteSensor
                 if dist > 0.1:
                     # Apply force toward marker
                     force_dir = np.array([dx, dy, 0], dtype=np.float32) / dist
-                    self.rigid_body.apply_force(force_dir * 50.0)
+                    self.rigid_body.apply_force(force_dir * 2.0)
     
     def apply_social_learning(self):
         """Apply learned behaviors from observations."""
@@ -387,8 +387,8 @@ class CollectiveCreature(PhysicsCreature, PsychedelicVisionMixin, CompleteSensor
                 # For now, just influence exploration direction
                 if self.rigid_body and np.random.random() < 0.1:
                     # Random exploration influenced by learned behavior
-                    random_force = np.random.uniform(-100, 100, size=3).astype(np.float32)
-                    random_force[2] *= 0.3  # Less vertical
+                    random_force = np.random.uniform(-2.0, 2.0, size=3).astype(np.float32)
+                    random_force[2] *= 0.1  # Much less vertical
                     self.rigid_body.apply_force(random_force)
     
     def update(self, dt: float = 1.0, resource_manager: Optional[ResourceManager] = None) -> bool:
@@ -430,6 +430,21 @@ class CollectiveCreature(PhysicsCreature, PsychedelicVisionMixin, CompleteSensor
             thought = self.markov.generate_and_evolve(max_length=8)
             if thought:
                 self.last_thought = thought
+        
+        # Auto-enable psychedelic pattern generation when tripping
+        # This creates the shared hallucination space on Circuit8
+        if hasattr(self, 'drugs'):
+            trip_level = np.sum(self.drugs.tripping) / max(1.0, self.drugs.max_trip)
+            if trip_level > 0.05 and not self.pattern_generation_enabled:
+                self.pattern_generation_enabled = True
+                if self.pattern_gen is None and hasattr(self, 'circuit8') and self.circuit8:
+                    from generators.visual.pattern_generators import PatternGenerator
+                    from generators.visual.neural_parameters import NeuralPatternMapper
+                    self.pattern_gen = PatternGenerator(
+                        width=self.circuit8.width,
+                        height=self.circuit8.height
+                    )
+                    self.pattern_mapper = NeuralPatternMapper()
         
         # Update psychedelic vision (pattern generation to Circuit8)
         self.update_psychedelic_vision(self.timestep_counter)

@@ -29,6 +29,7 @@ from OpenGL.GLU import *
 import numpy as np
 import sys
 import os
+from PIL import Image, ImageDraw, ImageFont
 
 # Add project root to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -47,6 +48,9 @@ from core.population_manager import PopulationManager
 from core.morphology.mesh_generator import ProceduralMeshGenerator
 from visualization.gl_primitives import setup_lighting, draw_sphere, draw_cylinder
 from core.resources.resource import ResourceType, create_food, create_drug_mushroom
+from core.evolution.species import SpeciesTracker, LineageTracker, GeneticDistance
+from visualization.force_directed_layout import ForceDirectedLayout
+from generators.audio import NeuralAudioSynthesizer
 
 
 class ResearchPlatform:
@@ -56,13 +60,18 @@ class ResearchPlatform:
         """Initialize research platform."""
         # Pygame setup
         pygame.init()
+        pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=2048)
         self.width = width
         self.height = height
+        
+        # Skip pygame.font entirely - it's broken in Python 3.14
+        # We'll use PIL for text rendering instead
+        print("🔧 Using PIL for text rendering (pygame.font broken in Python 3.14)")
         
         # Force window to top-left corner so it's visible
         os.environ['SDL_VIDEO_WINDOW_POS'] = "50,50"
         
-        # Create window with OpenGL BEFORE any imports that use pygame.font
+        # Create window with OpenGL
         pygame.display.set_mode(
             (width, height),
             DOUBLEBUF | OPENGL
@@ -84,27 +93,75 @@ class ResearchPlatform:
         self.MultiGraphPanel = MultiGraphPanel
         self.ConsoleWidget = ConsoleWidget
         
-        # Fonts (created AFTER UI widget imports complete)
+        # Fonts - PIL-based text rendering (bypasses pygame.font)
+        class PILFont:
+            """pygame.font replacement using PIL/Pillow for text rendering."""
+            def __init__(self, size=18):
+                self._size = size
+                try:
+                    # Try to load a monospace font
+                    self._pil_font = ImageFont.truetype("/System/Library/Fonts/Monaco.ttf", size)
+                except:
+                    # Fall back to default font
+                    self._pil_font = ImageFont.load_default()
+            
+            def render(self, text, antialias, color):
+                """Render text using PIL and convert to pygame Surface."""
+                if not text:
+                    return pygame.Surface((1, 1), pygame.SRCALPHA)
+                
+                # Get text size using PIL
+                dummy_img = Image.new('RGBA', (1, 1))
+                draw = ImageDraw.Draw(dummy_img)
+                bbox = draw.textbbox((0, 0), text, font=self._pil_font)
+                text_width = bbox[2] - bbox[0]
+                text_height = bbox[3] - bbox[1]
+                
+                # Create PIL image
+                img = Image.new('RGBA', (text_width + 4, text_height + 4), (0, 0, 0, 0))
+                draw = ImageDraw.Draw(img)
+                draw.text((2, 2), text, font=self._pil_font, fill=color)
+                
+                # Convert to pygame surface
+                mode = img.mode
+                size = img.size
+                data = img.tobytes()
+                surf = pygame.image.fromstring(data, size, mode)
+                
+                return surf
+            
+            def get_height(self):
+                return self._size
+            
+            def get_linesize(self):
+                return self._size
+            
+            def size(self, text):
+                """Get size of rendered text."""
+                if not text:
+                    return (0, self._size)
+                dummy_img = Image.new('RGBA', (1, 1))
+                draw = ImageDraw.Draw(dummy_img)
+                bbox = draw.textbbox((0, 0), text, font=self._pil_font)
+                return (bbox[2] - bbox[0], bbox[3] - bbox[1])
+        
+        print("🔧 Creating PIL fonts...")
         try:
-            self.font = pygame.font.Font(None, 18)
-            self.small_font = pygame.font.Font(None, 14)
-            self.title_font = pygame.font.Font(None, 24)
-        except (NotImplementedError, ImportError) as e:
-            print(f"Warning: pygame.font not available: {e}")
-            print("This may be a pygame/Python 3.14 compatibility issue.")
-            print("UI text will not be rendered, but 3D visualization should work.")
-            # Create dummy font objects that won't crash
+            self.font = PILFont(12)
+            self.small_font = PILFont(10)
+            self.title_font = PILFont(14)
+            print("✅ PIL fonts created successfully! Text will render properly.")
+        except Exception as e:
+            print(f"❌ PIL font creation failed: {e}")
+            # Ultra fallback
             class DummyFont:
                 def __init__(self, size=18):
                     self._size = size
                 def render(self, text, aa, color):
-                    # Return colored surface so UI is at least visible
                     width = max(len(text) * self._size // 2, 50)
                     surf = pygame.Surface((width, self._size), pygame.SRCALPHA)
-                    # Fill with semi-transparent version of text color
                     r, g, b = color[0], color[1], color[2]
-                    surf.fill((r, g, b, 100))  # Semi-transparent
-                    # Draw border for visibility
+                    surf.fill((r, g, b, 100))
                     pygame.draw.rect(surf, color, (0, 0, width, self._size), 1)
                     return surf
                 def get_height(self):
@@ -112,11 +169,11 @@ class ResearchPlatform:
                 def get_linesize(self):
                     return self._size
                 def size(self, text):
-                    # Return (width, height) tuple
                     return (len(text) * self._size // 2, self._size)
-            self.font = DummyFont(18)
-            self.small_font = DummyFont(14)
-            self.title_font = DummyFont(24)
+            self.font = DummyFont(12)
+            self.small_font = DummyFont(10)
+            self.title_font = DummyFont(14)
+            print("⚠️  Using colored boxes instead of text")
         
         # Core systems
         self.config = ConfigManager()
@@ -157,10 +214,12 @@ class ResearchPlatform:
         # Mesh generator for creature bodies
         self.mesh_generator = ProceduralMeshGenerator()
         
-        # Camera state for 3D (start zoomed out more)
-        self.camera_distance = 800.0
-        self.camera_rotation = 45.0
-        self.camera_elevation = 45.0
+        # Camera state: fixed-ground RTS-style camera
+        # Camera looks at (camera_x, camera_y) on the ground from above
+        self.camera_x = 0.0       # Look-at X on ground
+        self.camera_y = 0.0       # Look-at Y on ground
+        self.camera_zoom = 500.0  # Height/distance above ground (zoom level)
+        self.camera_angle = 55.0  # Fixed viewing angle (degrees from horizontal, 90=top-down)
         self.show_circuit8 = True
         
         # UI panels
@@ -176,6 +235,18 @@ class ResearchPlatform:
         self.collision_count = 0
         self.physics_world.register_collision_callback(self._on_collision)
         
+        # Species tracking
+        self.species_tracker = SpeciesTracker(compatibility_threshold=0.5)
+        self.lineage_tracker = LineageTracker()
+        
+        # Force-directed layout
+        self.force_layout = ForceDirectedLayout(
+            repulsion_strength=100.0,
+            attraction_strength=0.5,
+            similarity_threshold=0.7
+        )
+        self.use_force_layout = False
+        
         # Simulation control
         self.time_speed = 1.0  # Time speed multiplier
         
@@ -183,7 +254,18 @@ class ResearchPlatform:
         self.render_mode = 8  # 8 = all modes
         self.show_thoughts = True
         self.psychedelic_patterns_enabled = False
-        self.audio_enabled = False
+        self.audio_enabled = True  # Audio ON by default
+        
+        # Audio synthesis
+        self.audio_synth = NeuralAudioSynthesizer(
+            sample_rate=44100,
+            buffer_size=2048,
+            mode='mixed',
+            amplitude_scale=0.3,
+        )
+        self.audio_mode_names = ['potential', 'firing', 'mixed']
+        self.audio_mode_index = 2
+        self.sound_queue = []
         self.show_help = False
         
         # Mouse drag state for camera
@@ -255,22 +337,23 @@ class ResearchPlatform:
         self.console.add_line("Press 1/2/3 to load profiles, S to save")
         self.console.add_line("Ready!")
     
-    def _spawn_initial_creatures(self):
-        """Spawn initial creature population."""
+    def _spawn_initial_creatures(self, count=15):
+        """Spawn creatures and ADD them to the population (not replace)."""
         world_w = int(self.config.get("world_size_x"))
         world_h = int(self.config.get("world_size_y"))
         
-        # Use create_collective_creatures helper (start with fewer creatures)
-        self.creatures = create_collective_creatures(
-            n_creatures=3,  # Start with fewer to test stability
+        # Create new creatures and APPEND to existing list
+        new_creatures = create_collective_creatures(
+            n_creatures=count,
             physics_world=self.physics_world,
             circuit8=self.circuit8,
             collective_memory=self.collective_memory,
             world_bounds=(-world_w/2, -world_h/2, world_w/2, world_h/2)
         )
+        self.creatures.extend(new_creatures)
         
         # Log births
-        for creature in self.creatures:
+        for creature in new_creatures:
             self.logger.log_birth(creature, self.timestep)
     
     def _on_config_change(self, parameter):
@@ -308,9 +391,12 @@ class ResearchPlatform:
         
         self.timestep += 1
         
+        # Physics timestep - use small fixed timestep for stability
+        physics_dt = 0.016 * self.time_speed  # 60fps timestep
+        
         # Update physics world (with error handling)
         try:
-            self.physics_world.step(dt * 0.016)  # Convert to seconds (assuming 60fps)
+            self.physics_world.step(physics_dt)
         except Exception as e:
             print(f"Physics update error: {e}")
         
@@ -320,19 +406,35 @@ class ResearchPlatform:
         except Exception as e:
             print(f"Resource update error: {e}")
         
+        # Update Circuit8: decay fades old activity, voted movement applies collective will
+        self.circuit8.decay(rate=0.97)  # 3% fade per frame — keeps it dynamic
+        self.circuit8.apply_voted_movement()
+        
         # Update creatures (with error handling to prevent lockups)
+        # Use same timestep as physics for consistent force application
         alive_creatures = []
+        new_offspring = []
         for creature in self.creatures:
             try:
-                if creature.update(dt):
+                result = creature.update(physics_dt, resource_manager=self.resource_manager)
+                if result is False:
+                    # Dead
+                    self.logger.log_death(creature, self.timestep, "starvation")
+                elif result is True:
+                    # Alive, no offspring
                     alive_creatures.append(creature)
                 else:
-                    # Log death
-                    self.logger.log_death(creature, self.timestep, "starvation")
+                    # result is an offspring creature
+                    alive_creatures.append(creature)
+                    new_offspring.append(result)
+                    self.logger.log_reproduction(creature, None, result, self.timestep)
             except Exception as e:
                 print(f"Error updating creature: {e}")
                 # Keep creature alive but log error
                 alive_creatures.append(creature)
+        
+        # Add offspring to population
+        alive_creatures.extend(new_offspring)
         
         self.creatures = alive_creatures
         
@@ -345,12 +447,17 @@ class ResearchPlatform:
                 self.creatures, self.max_population, self.timestep, self.logger
             )
         
-        # Spawn new creature if population too low
-        if len(self.creatures) < 5:
-            self._spawn_initial_creatures()
+        # Spawn new creatures if population too low (append, don't replace)
+        if len(self.creatures) < 8:
+            needed = 8 - len(self.creatures)
+            self._spawn_initial_creatures(count=needed)
         
         # Update statistics
         self._update_statistics()
+        
+        # Audio synthesis
+        if self.audio_enabled and self.creatures:
+            self._update_audio()
         
         # Auto-save
         if self.timestep % self.autosave_interval == 0:
@@ -371,13 +478,15 @@ class ResearchPlatform:
                         mutation_rate=self.config.get("mutation_rate_neurons")
                     )
                     
-                    # Create child using helper
+                    # Create child near parents
+                    world_w = int(self.config.get("world_size_x"))
+                    world_h = int(self.config.get("world_size_y"))
                     children = create_collective_creatures(
                         n_creatures=1,
                         physics_world=self.physics_world,
                         circuit8=self.circuit8,
                         collective_memory=self.collective_memory,
-                        world_bounds=None  # Will spawn at center
+                        world_bounds=(-world_w/2, -world_h/2, world_w/2, world_h/2)
                     )
                     child = children[0]
                     # Override position and energy
@@ -457,9 +566,10 @@ class ResearchPlatform:
                     self.paused = not self.paused
                     self.console.add_line("Paused" if self.paused else "Unpaused")
                 elif event.key == K_r:
-                    self.camera_distance = 400.0
-                    self.camera_rotation = 45.0
-                    self.camera_elevation = 30.0
+                    self.camera_x = 0.0
+                    self.camera_y = 0.0
+                    self.camera_zoom = 500.0
+                    self.camera_angle = 55.0
                     self.console.add_line("Camera reset")
                 elif event.key == K_c:
                     self.show_circuit8 = not self.show_circuit8
@@ -513,7 +623,15 @@ class ResearchPlatform:
                 elif event.key == K_u:
                     # Toggle audio (changed from A to avoid WASD conflict)
                     self.audio_enabled = not self.audio_enabled
-                    self.console.add_line("Audio: " + ("ON" if self.audio_enabled else "OFF"))
+                    if self.audio_enabled:
+                        self.console.add_line(f"Audio: ON (mode: {self.audio_synth.mode})")
+                    else:
+                        self.console.add_line("Audio: OFF")
+                elif event.key == K_m:
+                    # Cycle audio modes
+                    self.audio_mode_index = (self.audio_mode_index + 1) % 3
+                    self.audio_synth.mode = self.audio_mode_names[self.audio_mode_index]
+                    self.console.add_line(f"Audio mode: {self.audio_synth.mode}")
                 elif event.key == K_LEFTBRACKET:
                     # Slow down time
                     self.time_speed = max(0.1, self.time_speed / 1.5)
@@ -528,24 +646,55 @@ class ResearchPlatform:
                     mode_names = ["", "Creatures", "Neural", "Circuit8", "Resources", 
                                   "Physics", "Signals", "Learning", "All"]
                     self.console.add_line(f"Render mode: {mode_names[self.render_mode]}")
-                elif K_9 <= event.key <= K_0:
-                    # Give drugs to all creatures (9=inhibitory_antagonist, 0=potentiator)
-                    molecule_type = (event.key - K_9) if event.key != K_0 else 4
-                    if molecule_type < 5:
-                        self._give_drug_to_all(molecule_type)
+                elif event.key == K_9:
+                    # Give drug to all (or selected) - Excitatory Agonist
+                    if self.selected_creature:
+                        self._give_drug_to_creature(self.selected_creature, 3)
+                    else:
+                        self._give_drug_to_all(3)
+                elif event.key == K_0:
+                    # Give drug to all (or selected) - Potentiator
+                    if self.selected_creature:
+                        self._give_drug_to_creature(self.selected_creature, 4)
+                    else:
+                        self._give_drug_to_all(4)
+                elif event.key == K_F1:
+                    # Give Inhibitory Antagonist to all or selected
+                    if self.selected_creature:
+                        self._give_drug_to_creature(self.selected_creature, 0)
+                    else:
+                        self._give_drug_to_all(0)
+                elif event.key == K_F2:
+                    # Give Inhibitory Agonist to all or selected
+                    if self.selected_creature:
+                        self._give_drug_to_creature(self.selected_creature, 1)
+                    else:
+                        self._give_drug_to_all(1)
+                elif event.key == K_F3:
+                    # Give Excitatory Antagonist to all or selected
+                    if self.selected_creature:
+                        self._give_drug_to_creature(self.selected_creature, 2)
+                    else:
+                        self._give_drug_to_all(2)
+                elif event.key == K_F4:
+                    # Give Excitatory Agonist to all or selected
+                    if self.selected_creature:
+                        self._give_drug_to_creature(self.selected_creature, 3)
+                    else:
+                        self._give_drug_to_all(3)
             
-            # Mouse drag for camera rotation
+            # Mouse drag for camera PAN (ground stays fixed)
             elif event.type == MOUSEBUTTONDOWN:
-                if event.button == 1:  # Left mouse button
+                if event.button == 1:  # Left mouse button - pan
                     self.mouse_dragging = True
                     self.last_mouse_x, self.last_mouse_y = event.pos
                 elif event.button == 3:  # Right click - inspect creature
                     self._try_inspect_creature(event.pos)
                 # Scroll wheel (some pygame versions use button 4/5)
-                elif event.button == 4:  # Scroll up
-                    self.camera_distance = max(50, self.camera_distance - 30)
-                elif event.button == 5:  # Scroll down
-                    self.camera_distance = min(2000, self.camera_distance + 30)
+                elif event.button == 4:  # Scroll up - zoom in
+                    self.camera_zoom = max(50, self.camera_zoom * 0.9)
+                elif event.button == 5:  # Scroll down - zoom out
+                    self.camera_zoom = min(2000, self.camera_zoom * 1.1)
             elif event.type == MOUSEBUTTONUP:
                 if event.button == 1:
                     self.mouse_dragging = False
@@ -553,26 +702,28 @@ class ResearchPlatform:
                 if self.mouse_dragging:
                     dx = event.pos[0] - self.last_mouse_x
                     dy = event.pos[1] - self.last_mouse_y
-                    self.camera_rotation += dx * 0.5
-                    self.camera_elevation -= dy * 0.5  # Inverted for natural feel
-                    self.camera_elevation = max(-89, min(89, self.camera_elevation))
+                    # Pan speed scales with zoom level (further out = faster pan)
+                    pan_speed = self.camera_zoom / 500.0
+                    self.camera_x -= dx * pan_speed
+                    self.camera_y += dy * pan_speed  # Inverted Y
                     self.last_mouse_x, self.last_mouse_y = event.pos
             
             # Camera zoom (MOUSEWHEEL event for newer pygame)
             elif event.type == MOUSEWHEEL:
-                self.camera_distance -= event.y * 30
-                self.camera_distance = max(50, min(2000, self.camera_distance))
+                zoom_factor = 1.0 - event.y * 0.08
+                self.camera_zoom = max(50, min(2000, self.camera_zoom * zoom_factor))
         
-        # Arrow keys for camera pan/rotation (WASD removed to avoid conflicts)
+        # Arrow keys for camera pan
         keys = pygame.key.get_pressed()
+        pan_speed = self.camera_zoom / 150.0  # Scale with zoom
         if keys[K_LEFT]:
-            self.camera_rotation -= 2
+            self.camera_x -= pan_speed
         if keys[K_RIGHT]:
-            self.camera_rotation += 2
+            self.camera_x += pan_speed
         if keys[K_UP]:
-            self.camera_elevation = min(80, self.camera_elevation + 2)
+            self.camera_y += pan_speed
         if keys[K_DOWN]:
-            self.camera_elevation = max(-80, self.camera_elevation - 2)
+            self.camera_y -= pan_speed
         
         return True
     
@@ -581,24 +732,34 @@ class ResearchPlatform:
         # 3D scene
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         
-        # Setup camera
+        # Setup camera - fixed ground, pan/zoom style
         glMatrixMode(GL_PROJECTION)
         glLoadIdentity()
-        gluPerspective(45, self.width / self.height, 0.1, 2000.0)
+        gluPerspective(45, self.width / self.height, 1.0, 5000.0)
         
         glMatrixMode(GL_MODELVIEW)
         glLoadIdentity()
         
-        # Apply camera transform
-        glTranslatef(0, 0, -self.camera_distance)
-        glRotatef(self.camera_elevation, 1, 0, 0)
-        glRotatef(self.camera_rotation, 0, 1, 0)
+        # Camera position: offset from look-at point based on angle and zoom
+        import math
+        angle_rad = math.radians(self.camera_angle)
+        cam_height = self.camera_zoom * math.sin(angle_rad)
+        cam_back = self.camera_zoom * math.cos(angle_rad)
         
-        # Render Circuit8 ground plane (if enabled)
-        if self.show_circuit8 and self.render_mode in [3, 8]:
+        eye_x = self.camera_x
+        eye_y = self.camera_y - cam_back  # Behind the look-at point
+        eye_z = cam_height
+        
+        gluLookAt(
+            eye_x, eye_y, eye_z,          # Eye position
+            self.camera_x, self.camera_y, 0.0,  # Look-at point on ground
+            0.0, 0.0, 1.0                 # Up vector (Z is up)
+        )
+        
+        # Render ground plane - Circuit8 when enabled, regular otherwise
+        if self.show_circuit8:
             self._render_circuit8_ground()
         else:
-            # Regular ground plane
             self._render_ground()
         
         # Render collective signals (if enabled)
@@ -609,9 +770,8 @@ class ResearchPlatform:
         if self.render_mode in [7, 8]:
             self._render_social_learning()
         
-        # Render resources (food & drugs)
-        if self.render_mode in [4, 8]:
-            self._render_resources()
+        # Render resources (food & drugs) - ALWAYS visible so user sees food/mushrooms
+        self._render_resources()
         
         # Render creatures with procedural meshes
         glEnable(GL_DEPTH_TEST)
@@ -860,7 +1020,39 @@ class ResearchPlatform:
             if hasattr(creature, 'drugs'):
                 creature.drugs.tripping[molecule_type] += 5.0
         drug_names = ["Inh. Antag.", "Inh. Agon.", "Exc. Antag.", "Exc. Agon.", "Potent."]
-        self.console.add_line(f"💊 Gave all creatures {drug_names[molecule_type]}")
+        self.console.add_line(f"💊 Gave ALL creatures {drug_names[molecule_type]}")
+    
+    def _give_drug_to_creature(self, creature, molecule_type: int):
+        """Give drug to a single selected creature."""
+        if hasattr(creature, 'drugs'):
+            creature.drugs.tripping[molecule_type] += 5.0
+            drug_names = ["Inh. Antag.", "Inh. Agon.", "Exc. Antag.", "Exc. Agon.", "Potent."]
+            cid = getattr(creature, 'creature_id', '?')
+            self.console.add_line(f"💊 Dosed creature {cid} with {drug_names[molecule_type]}")
+    
+    def _update_audio(self):
+        """Generate and play audio from creature neural activity."""
+        if not self.creatures:
+            return
+        
+        creature = self.creatures[0]
+        if not hasattr(creature, 'network'):
+            return
+        
+        try:
+            audio_samples = self.audio_synth.synthesize_from_network(
+                creature.network, 
+                duration_seconds=0.02
+            )
+            audio_int16 = (audio_samples * 32767).astype(np.int16)
+            stereo_audio = np.column_stack((audio_int16, audio_int16))
+            sound = pygame.sndarray.make_sound(stereo_audio)
+            sound.play()
+            self.sound_queue.append(sound)
+            if len(self.sound_queue) > 16:
+                self.sound_queue.pop(0)
+        except Exception:
+            pass
     
     def _try_inspect_creature(self, mouse_pos):
         """Try to pick and inspect a creature at mouse position."""
@@ -1222,41 +1414,57 @@ class ResearchPlatform:
         glEnable(GL_LIGHTING)
     
     def _render_circuit8_ground(self):
-        """Render Circuit8 as glowing ground plane."""
+        """Render Circuit8 as textured ground plane.
+        
+        Uses an OpenGL texture for the 64x48 canvas — much faster than
+        individual quads (one draw call instead of 3072).
+        """
         glDisable(GL_DEPTH_TEST)
         glDisable(GL_LIGHTING)
         
-        glPushMatrix()
-        glTranslatef(0, 0, 0)
+        world_w = int(self.config.get("world_size_x"))
+        world_h = int(self.config.get("world_size_y"))
+        hw = world_w / 2
+        hh = world_h / 2
         
-        # Sample center pixel for overall color
-        r, g, b = self.circuit8.read_pixel(32, 24)
-        r_f = min(1.0, float(r) / 255.0 * 3.0 + 0.3)
-        g_f = min(1.0, float(g) / 255.0 * 3.0 + 0.3)
-        b_f = min(1.0, float(b) / 255.0 * 3.0 + 0.3)
+        # Create Circuit8 texture if needed
+        if not hasattr(self, '_c8_texture'):
+            self._c8_texture = glGenTextures(1)
         
-        # Draw colored ground
-        size = 500.0
-        glColor3f(r_f, g_f, b_f)
+        # Boost brightness: convert uint8 screen to brightened RGB
+        screen = self.circuit8.screen.astype(np.float32)  # (48, 64, 3)
+        boosted = np.clip(screen * 2.0 + 8.0, 0, 255).astype(np.uint8)
+        
+        # Upload as texture (64x48 RGB)
+        glBindTexture(GL_TEXTURE_2D, self._c8_texture)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)  # Pixelated look
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB,
+                     self.circuit8.width, self.circuit8.height, 0,
+                     GL_RGB, GL_UNSIGNED_BYTE, boosted.tobytes())
+        
+        # Draw textured ground quad
+        glEnable(GL_TEXTURE_2D)
+        glColor3f(1.0, 1.0, 1.0)  # Full brightness (texture provides color)
         glBegin(GL_QUADS)
-        glVertex3f(-size, -size, 0)
-        glVertex3f(size, -size, 0)
-        glVertex3f(size, size, 0)
-        glVertex3f(-size, size, 0)
+        glTexCoord2f(0, 0); glVertex3f(-hw, -hh, 0.0)
+        glTexCoord2f(1, 0); glVertex3f(hw, -hh, 0.0)
+        glTexCoord2f(1, 1); glVertex3f(hw, hh, 0.0)
+        glTexCoord2f(0, 1); glVertex3f(-hw, hh, 0.0)
         glEnd()
+        glDisable(GL_TEXTURE_2D)
+        glBindTexture(GL_TEXTURE_2D, 0)
         
-        # Bright border
-        glColor3f(1.0, 1.0, 0.0)
-        glLineWidth(5.0)
+        # Subtle border
+        glColor3f(0.3, 0.3, 0.5)
+        glLineWidth(2.0)
         glBegin(GL_LINE_LOOP)
-        glVertex3f(-size, -size, 0.1)
-        glVertex3f(size, -size, 0.1)
-        glVertex3f(size, size, 0.1)
-        glVertex3f(-size, size, 0.1)
+        glVertex3f(-hw, -hh, 0.1)
+        glVertex3f(hw, -hh, 0.1)
+        glVertex3f(hw, hh, 0.1)
+        glVertex3f(-hw, hh, 0.1)
         glEnd()
         glLineWidth(1.0)
-        
-        glPopMatrix()
         
         glEnable(GL_DEPTH_TEST)
         glEnable(GL_LIGHTING)
@@ -1355,7 +1563,7 @@ class ResearchPlatform:
             "=== CRITTERGOD RESEARCH PLATFORM ===",
             "",
             "CAMERA:",
-            "  Mouse drag: Rotate | Scroll: Zoom | Arrows: Pan",
+            "  Mouse drag: Pan | Scroll: Zoom | Arrows: Pan",
             "  Right-click: Inspect creature (detailed stats)",
             "  R: Reset camera",
             "",
@@ -1365,9 +1573,10 @@ class ResearchPlatform:
             "  K: Kill half population",
             "",
             "INTERACTIVE:",
-            "  F: Spawn food | D: Spawn drug",
+            "  F: Spawn food | D: Spawn drug mushroom",
             "  I: Apply impulses (physics test)",
-            "  9-0: Give drugs to all (by type)",
+            "  9: Excitatory Agonist | 0: Potentiator",
+            "  F1-F4: Drug types (to all or selected creature)",
             "",
             "VISUALIZATION:",
             "  1-8: Render modes (1=creatures, 8=all)",

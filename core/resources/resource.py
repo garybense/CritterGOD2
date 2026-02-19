@@ -152,7 +152,7 @@ def create_food(x: float, y: float, energy_value: float = 100000.0) -> Resource:
         amount=energy_value,
         max_amount=energy_value,
         regrowth_rate=energy_value * 0.01,  # 1% regrowth per timestep
-        radius=15.0
+        radius=3.0
     )
 
 
@@ -176,7 +176,7 @@ def create_drug_mushroom(x: float, y: float, molecule_type: int,
         amount=dosage,
         max_amount=dosage,
         regrowth_rate=dosage * 0.005,  # Slower regrowth (0.5% per timestep)
-        radius=12.0,
+        radius=2.5,
         molecule_type=molecule_type
     )
 

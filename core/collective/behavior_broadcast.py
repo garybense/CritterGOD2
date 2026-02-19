@@ -277,8 +277,8 @@ class BehaviorReader:
         Returns:
             SignalType if recognized, None otherwise
         """
-        # Require minimum intensity
-        if r + g + b < self.signal_threshold:
+        # Require minimum intensity (cast to int to avoid uint8 overflow)
+        if int(r) + int(g) + int(b) < self.signal_threshold:
             return None
         
         # Classify based on dominant color(s)

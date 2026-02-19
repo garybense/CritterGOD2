@@ -132,14 +132,20 @@ class BehavioralCreature(MorphologicalCreature):
                 # Move toward target
                 dx, dy = self.behavior.get_movement_direction(self.x, self.y, self.target_resource)
                 
-                # Apply movement
-                move_dist = self.movement_speed * dt
-                self.x += dx * move_dist
-                self.y += dy * move_dist
-                
-                # Stay in world bounds (simple wrapping for now)
-                self.x = self.x % resource_manager.world_width
-                self.y = self.y % resource_manager.world_height
+                # If physics is active, apply force instead of direct position modification
+                if hasattr(self, 'rigid_body') and self.rigid_body is not None:
+                    # Apply gentle force toward target through physics
+                    force = np.array([dx * 2.0, dy * 2.0, 0.0], dtype=np.float32)
+                    self.rigid_body.apply_force(force)
+                else:
+                    # No physics - move directly (fallback)
+                    move_dist = self.movement_speed * dt
+                    self.x += dx * move_dist
+                    self.y += dy * move_dist
+                    
+                    # Stay in world bounds (simple wrapping for now)
+                    self.x = self.x % resource_manager.world_width
+                    self.y = self.y % resource_manager.world_height
     
     def _find_best_resource(self, resource_manager: ResourceManager) -> Optional[Resource]:
         """Find most motivating resource within detection range.

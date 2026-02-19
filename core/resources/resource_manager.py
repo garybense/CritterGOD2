@@ -42,9 +42,9 @@ class ResourceManager:
         self.resources: List[Resource] = []
         
         # Density parameters (configurable)
-        self.food_density = 20.0  # 20 food per 10000 sq units
-        self.drug_density = 10.0   # 10 drug mushrooms per 10000 sq units
-        self.min_spacing = 30.0    # Minimum distance between resources
+        self.food_density = 4.0   # 4 food per 10000 sq units (~100 in 500x500 world)
+        self.drug_density = 1.5   # 1.5 drug mushrooms per 10000 sq units (~37)
+        self.min_spacing = 20.0   # Minimum distance between resources
     
     def spawn_initial_resources(self, food_count: Optional[int] = None,
                                 drug_count: Optional[int] = None) -> None:
@@ -97,9 +97,11 @@ class ResourceManager:
         Args:
             count: Number of energy zones
         """
+        half_w = self.world_width / 2.0
+        half_h = self.world_height / 2.0
         for _ in range(count):
-            x = np.random.uniform(50, self.world_width - 50)
-            y = np.random.uniform(50, self.world_height - 50)
+            x = np.random.uniform(-half_w + 50, half_w - 50)
+            y = np.random.uniform(-half_h + 50, half_h - 50)
             radius = np.random.uniform(40.0, 80.0)
             energy_rate = np.random.uniform(50.0, 150.0)
             
@@ -114,9 +116,11 @@ class ResourceManager:
         Args:
             count: Number of breeding grounds
         """
+        half_w = self.world_width / 2.0
+        half_h = self.world_height / 2.0
         for _ in range(count):
-            x = np.random.uniform(100, self.world_width - 100)
-            y = np.random.uniform(100, self.world_height - 100)
+            x = np.random.uniform(-half_w + 100, half_w - 100)
+            y = np.random.uniform(-half_h + 100, half_h - 100)
             radius = np.random.uniform(50.0, 100.0)
             
             ground = create_breeding_ground(x, y, radius)
@@ -236,15 +240,18 @@ class ResourceManager:
         """Generate n positions using Poisson disk sampling.
         
         Ensures minimum distance between points for natural distribution.
+        Coordinates are CENTERED (e.g. -250..250 for a 500-wide world) to match
+        the physics world coordinate system.
         
         Args:
             n: Number of points to generate
             min_dist: Minimum distance between points
             
         Returns:
-            List of (x, y) positions
+            List of (x, y) positions in centered coordinates
         """
         # Simple Bridson's algorithm implementation
+        # Work in 0..width space internally, then offset to centered coords
         cell_size = min_dist / np.sqrt(2)
         grid_width = int(np.ceil(self.world_width / cell_size))
         grid_height = int(np.ceil(self.world_height / cell_size))
@@ -253,7 +260,7 @@ class ResourceManager:
         points = []
         active = []
         
-        # Start with random point
+        # Start with random point (internal 0..width coords)
         x0 = np.random.uniform(0, self.world_width)
         y0 = np.random.uniform(0, self.world_height)
         points.append((x0, y0))
@@ -311,7 +318,11 @@ class ResourceManager:
             if not found:
                 active.pop(idx)
         
-        return points[:n]
+        # Convert from 0..width to centered coordinates (-width/2..width/2)
+        half_w = self.world_width / 2.0
+        half_h = self.world_height / 2.0
+        centered_points = [(x - half_w, y - half_h) for x, y in points[:n]]
+        return centered_points
     
     def clear_resources(self) -> None:
         """Remove all resources."""

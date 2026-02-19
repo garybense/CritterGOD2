@@ -92,17 +92,23 @@ class NeuralAudioSynthesizer:
         # Sum all neuron potentials
         total_potential = sum(n.potential for n in network.neurons)
 
-        # Normalize to reasonable range (assuming typical potential 0-5000)
-        max_expected_potential = len(network.neurons) * 2500
-        normalized = total_potential / max(max_expected_potential, 1.0)
+        # Normalize using average potential per neuron
+        # Typical range is 0-500 for average potential
+        avg_potential = total_potential / max(len(network.neurons), 1)
+        normalized = min(1.0, avg_potential / 300.0)  # Scale so 300 avg = 1.0
 
         # Generate sine wave at frequency proportional to potential
         base_freq = 200.0  # Hz
         freq = base_freq + normalized * 400.0  # 200-600 Hz range
 
+        # Use minimum amplitude floor (0.3) so audio is always audible
+        # Plus modulation from network activity (0.0-0.7)
+        min_amplitude = 0.3
+        amplitude = min_amplitude + normalized * 0.7
+
         samples = np.zeros(num_samples, dtype=np.float32)
         for i in range(num_samples):
-            samples[i] = np.sin(self._phase * 2.0 * np.pi) * normalized
+            samples[i] = np.sin(self._phase * 2.0 * np.pi) * amplitude
             self._phase += freq / self.sample_rate
             self._phase %= 1.0  # Keep phase in [0, 1)
 
@@ -116,39 +122,38 @@ class NeuralAudioSynthesizer:
         """
         Synthesize audio from firing events.
         
-        Creates percussive attacks when neurons fire.
-        More sparse, rhythmic texture.
+        Creates percussive/buzzy tones based on firing rate.
+        More active networks produce brighter, noisier sound.
         """
-        # Find neurons that fired this step
-        firing_neurons = {
-            n.neuron_id for n in network.neurons
-            if n.did_fire()
-        }
-
-        # Detect new firing events (wasn't firing last check)
-        new_firings = firing_neurons - self._last_firing_neurons
-        self._last_firing_neurons = firing_neurons
-
-        # Generate attack transient for each new firing
+        # Count neurons that fired (use fired_last_step for post-update state)
+        firing_count = sum(1 for n in network.neurons if n.fired_last_step())
+        
+        # If no firings detected, try did_fire() as fallback
+        if firing_count == 0:
+            firing_count = sum(1 for n in network.neurons if n.did_fire())
+        
+        # Calculate firing ratio
+        firing_ratio = firing_count / max(len(network.neurons), 1)
+        
+        # Generate buzzy tone - frequency based on firing ratio
+        # More firing = higher, brighter frequency
+        base_freq = 150.0  # Hz
+        freq = base_freq + firing_ratio * 500.0  # 150-650 Hz range
+        
+        # Add some harmonics for texture based on firing rate
         samples = np.zeros(num_samples, dtype=np.float32)
-
-        if new_firings:
-            # Create percussive envelope
-            attack_samples = min(num_samples, int(self.sample_rate * 0.01))  # 10ms attack
-            decay_samples = num_samples - attack_samples
-
-            # Attack phase (0 to 1)
-            if attack_samples > 0:
-                samples[:attack_samples] = np.linspace(0, 1, attack_samples)
-
-            # Decay phase (exponential)
-            if decay_samples > 0:
-                decay = np.exp(-3.0 * np.linspace(0, 1, decay_samples))
-                samples[attack_samples:] = decay
-
-            # Scale by number of firings (more firings = louder)
-            amplitude = min(1.0, len(new_firings) / 100.0)
-            samples *= amplitude
+        
+        # Minimum amplitude 0.3, scales up with more firings
+        amplitude = 0.3 + min(0.7, firing_ratio * 2.0)
+        
+        for i in range(num_samples):
+            # Fundamental + harmonics for richer sound
+            sample = np.sin(self._phase * 2.0 * np.pi)
+            sample += 0.3 * np.sin(self._phase * 4.0 * np.pi)  # 2nd harmonic
+            sample += 0.1 * np.sin(self._phase * 6.0 * np.pi)  # 3rd harmonic
+            samples[i] = sample * amplitude * 0.5  # Scale down due to harmonics
+            self._phase += freq / self.sample_rate
+            self._phase %= 1.0
 
         return samples * self.amplitude_scale
 

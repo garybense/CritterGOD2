@@ -18,20 +18,21 @@ def create_demo_network(n_neurons: int = 100) -> NeuralNetwork:
     """Create a small self-exciting neural network."""
     network = NeuralNetwork()
 
-    # Add neurons with random thresholds
+    # Add neurons with LOW thresholds so chain reactions can sustain
     for i in range(n_neurons):
-        threshold = 700 + np.random.uniform(0, 8000)
+        threshold = 150 + np.random.uniform(0, 350)  # 150-500 range (much lower)
         neuron = Neuron(
             neuron_id=i,
             threshold=threshold,
-            leak_rate=0.95,  # 5% leak per step
+            leak_rate=0.92,  # 8% leak - faster decay creates rhythm
         )
+        neuron.potential = np.random.uniform(0, 100)  # Start low
         network.add_neuron(neuron)
 
-    # Create random connections
+    # Create DENSE connections for self-sustaining activity
     network.create_random_synapses(
-        synapses_per_neuron=40,
-        inhibitory_probability=0.21,
+        synapses_per_neuron=60,  # More connections
+        inhibitory_prob=0.15,   # Fewer inhibitory = more activity
     )
 
     return network
@@ -84,14 +85,18 @@ def main():
         amplitude_scale=0.2,
     )
 
-    # Give initial energy to kickstart activity
-    for neuron in network.neurons[:10]:
-        neuron.add_input(5000.0)
+    # Give strong initial energy to ensure neurons fire immediately
+    for neuron in network.neurons:
+        neuron.add_input(np.random.uniform(1000, 3000))  # All neurons get energy
 
     # Main loop
     clock = pygame.time.Clock()
     running = True
     frame_count = 0
+    energy_injection_rate = 5  # Inject energy frequently to maintain activity
+    
+    # Keep references to recent sounds to prevent garbage collection
+    sound_queue = []
 
     while running:
         # Handle events
@@ -102,11 +107,13 @@ def main():
                 if event.key == pygame.K_q:
                     running = False
                 elif event.key == pygame.K_SPACE:
-                    # Inject random energy
-                    for _ in range(5):
-                        neuron = np.random.choice(network.neurons)
-                        neuron.add_input(np.random.uniform(1000, 5000))
-                    print("  [Energy injected]")
+                    # Inject MASSIVE energy burst - affects most of the network
+                    injected = 0
+                    for neuron in network.neurons:
+                        if np.random.random() < 0.7:  # 70% of neurons
+                            neuron.add_input(np.random.uniform(3000, 8000))
+                            injected += 1
+                    print(f"  [BURST! Energy injected into {injected} neurons]")
                 elif event.key == pygame.K_1:
                     synth.mode = 'potential'
                     print("  Mode: POTENTIAL (smooth drone)")
@@ -117,20 +124,34 @@ def main():
                     synth.mode = 'mixed'
                     print("  Mode: MIXED (drone + percussion)")
 
+        # Continuous energy injection to sustain activity
+        if frame_count % energy_injection_rate == 0:
+            # Inject energy into multiple neurons (simulates continuous sensory input)
+            for _ in range(10):  # More neurons
+                neuron = np.random.choice(network.neurons)
+                neuron.add_input(np.random.uniform(200, 600))  # More energy
+
         # Update network
         network.update(dt=1.0)
 
         # Generate and play audio
         audio_samples = synth.synthesize_from_network(network, duration_seconds=0.02)
 
-        # Convert to pygame Sound and play
+        # Convert to pygame Sound and play (stereo format required)
         audio_int16 = (audio_samples * 32767).astype(np.int16)
-        sound = pygame.sndarray.make_sound(audio_int16)
+        stereo_audio = np.column_stack((audio_int16, audio_int16))
+        sound = pygame.sndarray.make_sound(stereo_audio)
         sound.play()
+        
+        # Keep reference to prevent garbage collection, limit queue size
+        sound_queue.append(sound)
+        if len(sound_queue) > 16:
+            sound_queue.pop(0)
 
         # Display network stats
         if frame_count % 30 == 0:
-            firing_count = sum(1 for n in network.neurons if n.did_fire())
+            # Use fired_last_step() - did_fire() is cleared after update()
+            firing_count = sum(1 for n in network.neurons if n.fired_last_step())
             total_potential = sum(n.potential for n in network.neurons)
             avg_potential = total_potential / len(network.neurons)
 
@@ -142,25 +163,28 @@ def main():
         # Clear screen and draw simple visualization
         screen.fill((0, 0, 0))
 
-        # Draw firing neurons as dots
+        # Draw firing neurons as dots (use fired_last_step for correct timing)
         for i, neuron in enumerate(network.neurons):
-            if neuron.did_fire():
+            if neuron.fired_last_step():
                 x = (i % 20) * 20 + 10
                 y = (i // 20) * 20 + 10
                 pygame.draw.circle(screen, (255, 255, 0), (x, y), 3)
 
-        # Draw info text
-        font = pygame.font.Font(None, 24)
-        texts = [
-            f"Neurons: {len(network.neurons)}",
-            f"Mode: {synth.mode}",
-            "SPACE: inject energy",
-            "1-3: change mode",
-            "Q: quit",
-        ]
-        for i, text in enumerate(texts):
-            surface = font.render(text, True, (200, 200, 200))
-            screen.blit(surface, (10, 200 + i * 20))
+        # Draw info text (with font fallback for Python 3.14 compatibility)
+        try:
+            font = pygame.font.Font(None, 24)
+            texts = [
+                f"Neurons: {len(network.neurons)}",
+                f"Mode: {synth.mode}",
+                "SPACE: inject energy",
+                "1-3: change mode",
+                "Q: quit",
+            ]
+            for i, text in enumerate(texts):
+                surface = font.render(text, True, (200, 200, 200))
+                screen.blit(surface, (10, 200 + i * 20))
+        except (NotImplementedError, ImportError):
+            pass  # Font not available on Python 3.14
 
         pygame.display.flip()
 

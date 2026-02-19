@@ -1,0 +1,63 @@
+{
+  "profile_name": "gpu_large",
+  "description": "Optimized for GPU-accelerated large networks (10k+ neurons)",
+  
+  "neural": {
+    "neurons_min": 5000,
+    "neurons_max": 20000,
+    "synapses_per_neuron": 40,
+    "threshold_min": 700,
+    "threshold_max": 8700,
+    "inhibitory_ratio": 0.30,
+    "plasticity_enabled_ratio": 0.80,
+    "synapse_weakening_rate": 0.0001,
+    "weight_clamp_min": -5.0,
+    "weight_clamp_max": 5.0
+  },
+  
+  "gpu": {
+    "enabled": true,
+    "backend": "auto",
+    "batch_size": 2048,
+    "block_size": 512,
+    "use_fp16": false,
+    "async_transfer": true,
+    "preallocate_memory": true,
+    "max_neurons": 50000,
+    "max_synapses": 5000000
+  },
+  
+  "creature": {
+    "initial_energy": 5000000,
+    "energy_per_neuron": 0.0001,
+    "energy_per_synapse": 0.00001,
+    "energy_per_fire": 0.1,
+    "creature_kill_half_at": 20,
+    "creature_proc_interval": 500
+  },
+  
+  "world": {
+    "world_size_x": 1000,
+    "world_size_y": 1000
+  },
+  
+  "resources": {
+    "food_density": 500,
+    "food_energy": 100000,
+    "drug_density": 100
+  },
+  
+  "physics": {
+    "gravity": -9.8,
+    "friction": 0.98,
+    "damping": 0.995,
+    "collision_damping": 0.7
+  },
+  
+  "evolution": {
+    "mutation_rate_neurons": 0.3,
+    "mutation_rate_synapses": 0.2,
+    "mutation_rate_thresholds": 0.3,
+    "mutation_rate_body": 0.2
+  }
+}
