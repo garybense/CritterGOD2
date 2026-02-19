@@ -73,26 +73,31 @@ class EventLogger:
     
     def log_death(self, creature, timestep: int, cause: str = "unknown"):
         """
-        Log creature death.
+        Log creature death in critterding format.
         
         Args:
             creature: Deceased creature
             timestep: Current timestep
-            cause: Cause of death
+            cause: Cause of death ("starvation", "fell in the pit", "manual_cull")
         """
         self.deaths += 1
         
-        # Format: "timestep : creature_id died age: X energy: Y cause: Z"
-        line = (f"{timestep} : {creature.creature_id} died "
-                f"age: {creature.age} "
-                f"energy: {creature.energy.energy:.0f} "
-                f"cause: {cause}")
+        # Critterding-style death messages
+        if cause == "fell in the pit":
+            line = f"{creature.creature_id} fell in the pit"
+        elif cause == "starvation":
+            line = f"{creature.creature_id} starved"
+        else:
+            line = (f"{creature.creature_id} died "
+                    f"age: {creature.age} cause: {cause}")
         
         self.add_line(line)
     
     def log_reproduction(self, parent1, parent2, offspring, timestep: int):
         """
-        Log reproduction event.
+        Log reproduction event in critterding format.
+        
+        Format: "parent_id : child_id ad: X n: Y s: Z brain mutant"
         
         Args:
             parent1: First parent
@@ -102,14 +107,13 @@ class EventLogger:
         """
         self.reproductions += 1
         
-        if parent2:
-            # Sexual reproduction
-            line = (f"{timestep} : {parent1.creature_id} procreated with "
-                    f"{parent2.creature_id} → offspring: {offspring.creature_id}")
-        else:
-            # Asexual reproduction
-            line = (f"{timestep} : {parent1.creature_id} reproduced "
-                    f"→ offspring: {offspring.creature_id}")
+        # Critterding-style format: parent : child ad: N n: N s: N event_type
+        o_neurons = len(offspring.network.neurons) if hasattr(offspring, 'network') else 0
+        o_synapses = len(offspring.network.synapses) if hasattr(offspring, 'network') else 0
+        o_ad = getattr(offspring, 'adam_distance', 0)
+        
+        line = (f"{parent1.creature_id} : {offspring.creature_id} "
+                f"ad: {o_ad} n: {o_neurons} s: {o_synapses} brain mutant")
         
         self.add_line(line)
     

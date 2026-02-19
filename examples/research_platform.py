@@ -274,8 +274,14 @@ class ResearchPlatform:
         self.last_mouse_x = 0
         self.last_mouse_y = 0
         
+        # Auto-insert creatures (critterding heritage: insertcritterevery)
+        self.insert_creature_every = 2000  # Insert new random creature every N timesteps
+        
+        # Inspector button regions (for click detection)
+        self.inspector_buttons = []  # List of (rect, action_name) tuples
+        
         # Setup OpenGL
-        glClearColor(0.05, 0.05, 0.1, 1.0)
+        glClearColor(0.4, 0.6, 0.9, 1.0)  # Sky blue background
         glEnable(GL_DEPTH_TEST)
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
@@ -445,12 +451,40 @@ class ResearchPlatform:
                 self.creatures, self.max_population, self.timestep, self.logger
             )
         
+        # World edge "pit" deaths (critterding heritage)
+        # Creatures that wander off the edge die — creates selection pressure
+        world_w = int(self.config.get("world_size_x"))
+        world_h = int(self.config.get("world_size_y"))
+        pit_margin = 20.0
+        pit_boundary_x = world_w / 2 + pit_margin
+        pit_boundary_y = world_h / 2 + pit_margin
+        pit_victims = []
+        for creature in self.creatures:
+            if (abs(creature.x) > pit_boundary_x or 
+                abs(creature.y) > pit_boundary_y):
+                pit_victims.append(creature)
+        for victim in pit_victims:
+            self.creatures.remove(victim)
+            self.logger.log_death(victim, self.timestep, "fell in the pit")
+        
+        # Auto-insert new creatures (critterding: insertcritterevery)
+        if (self.insert_creature_every > 0 and 
+            self.timestep % self.insert_creature_every == 0 and
+            len(self.creatures) < self.max_population and
+            len(self.creatures) > 0):  # Don't auto-insert if extinct
+            self._spawn_initial_creatures(count=1)
+            self.console.add_line(f"Auto-inserted new creature (pop: {len(self.creatures)})")
+        
         # Check for extinction
         if len(self.creatures) == 0 and not self.extinct:
             self.extinct = True
             self.paused = True
             self.console.add_line("*** EXTINCTION — All creatures have died ***")
             self.console.add_line("Press N to start a new simulation")
+        
+        # Update species tracking (every 50 timesteps)
+        if self.timestep % 50 == 0 and self.creatures:
+            self.species_tracker.update_species(self.creatures, self.timestep)
         
         # Update statistics
         self._update_statistics()
@@ -636,9 +670,18 @@ class ResearchPlatform:
             
             # Mouse drag for camera PAN (ground stays fixed)
             elif event.type == MOUSEBUTTONDOWN:
-                if event.button == 1:  # Left mouse button - pan
-                    self.mouse_dragging = True
-                    self.last_mouse_x, self.last_mouse_y = event.pos
+                if event.button == 1:  # Left mouse button
+                    # Check inspector buttons first
+                    btn_clicked = False
+                    if self.selected_creature and self.inspector_buttons:
+                        for rect, action in self.inspector_buttons:
+                            if rect.collidepoint(event.pos):
+                                self._inspector_button_action(action)
+                                btn_clicked = True
+                                break
+                    if not btn_clicked:
+                        self.mouse_dragging = True
+                        self.last_mouse_x, self.last_mouse_y = event.pos
                 elif event.button == 3:  # Right click - inspect creature
                     self._try_inspect_creature(event.pos)
                 # Scroll wheel (some pygame versions use button 4/5)
@@ -682,6 +725,9 @@ class ResearchPlatform:
         """Render complete scene."""
         # 3D scene
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+        
+        # Render sky gradient (before 3D camera setup)
+        self._render_sky()
         
         # Setup camera - fixed ground, pan/zoom style
         glMatrixMode(GL_PROJECTION)
@@ -817,6 +863,12 @@ class ResearchPlatform:
         if self.show_thoughts and hasattr(self, '_thoughts_to_render'):
             self._render_thought_bubbles(ui_surface)
         
+        # Render species color table (right side, below graphs)
+        self._render_species_panel(ui_surface)
+        
+        # Render population aggregate stats (below Circuit8)
+        self._render_population_stats(ui_surface)
+        
         # Render creature inspector (if a creature is selected)
         if self.selected_creature:
             self._render_inspector_panel(ui_surface)
@@ -842,6 +894,44 @@ class ResearchPlatform:
         glPopMatrix()
         
         pygame.display.flip()
+    
+    def _render_sky(self):
+        """Render sky gradient background (critterding-style atmosphere)."""
+        # Switch to 2D orthographic for sky quad
+        glMatrixMode(GL_PROJECTION)
+        glPushMatrix()
+        glLoadIdentity()
+        gluOrtho2D(0, 1, 0, 1)
+        glMatrixMode(GL_MODELVIEW)
+        glPushMatrix()
+        glLoadIdentity()
+        
+        glDisable(GL_DEPTH_TEST)
+        glDisable(GL_LIGHTING)
+        
+        # Sky gradient: deep blue at top -> lighter blue-white at horizon (bottom)
+        glBegin(GL_QUADS)
+        # Bottom (horizon) - light blue/white
+        glColor3f(0.65, 0.78, 0.92)
+        glVertex2f(0, 0)
+        glVertex2f(1, 0)
+        # Top - deeper blue
+        glColor3f(0.25, 0.45, 0.85)
+        glVertex2f(1, 1)
+        glVertex2f(0, 1)
+        glEnd()
+        
+        glEnable(GL_DEPTH_TEST)
+        glEnable(GL_LIGHTING)
+        
+        # Restore matrices
+        glMatrixMode(GL_PROJECTION)
+        glPopMatrix()
+        glMatrixMode(GL_MODELVIEW)
+        glPopMatrix()
+        
+        # Clear only depth buffer so sky stays as background
+        glClear(GL_DEPTH_BUFFER_BIT)
     
     def _render_ground(self):
         """Render ground plane with grid."""
@@ -1163,14 +1253,10 @@ class ResearchPlatform:
                 f"  Behaviors: {len(c.learner.behavior_success_rates)}",
             ])
         
-        inspector_lines.extend([
-            "",
-            "Right-click to close",
-        ])
-        
         # Create panel surface
         panel_width = 280
-        panel_height = min(600, len(inspector_lines) * 18 + 30)
+        button_section_height = 55  # Space for buttons
+        panel_height = min(600, len(inspector_lines) * 16 + button_section_height + 20)
         panel = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
         panel.fill((20, 40, 60, 220))  # Dark blue semi-transparent
         pygame.draw.rect(panel, (100, 200, 255), (0, 0, panel_width, panel_height), 2)
@@ -1191,11 +1277,41 @@ class ResearchPlatform:
                 
                 text_surf = self.small_font.render(line, True, color)
                 panel.blit(text_surf, (10, y))
-            y += 18
+            y += 16
         
-        # Position panel on right side (below graph panel)
+        # === Action Buttons (critterding heritage) ===
+        y += 4
+        button_defs = [
+            ('kill', (180, 60, 60), 'kill'),
+            ('duplicate', (60, 120, 180), 'duplicate'),
+            ('feed', (60, 160, 60), 'feed'),
+            ('brain mut', (180, 140, 60), 'brain_mutant'),
+            ('body mut', (140, 60, 180), 'body_mutant'),
+        ]
+        
+        # Position panel on right side
         x_pos = self.width - 290
         y_pos = 420  # Below the graph panel
+        
+        # Store button positions for click detection (in screen coords)
+        self.inspector_buttons = []
+        btn_x = 10
+        btn_w = 50
+        btn_h = 20
+        btn_gap = 3
+        for label, color, action in button_defs:
+            # Draw button on panel
+            pygame.draw.rect(panel, color, (btn_x, y, btn_w, btn_h))
+            pygame.draw.rect(panel, (255, 255, 255), (btn_x, y, btn_w, btn_h), 1)
+            btn_text = self.small_font.render(label, True, (255, 255, 255))
+            panel.blit(btn_text, (btn_x + 3, y + 3))
+            
+            # Store screen-space rect for click detection
+            screen_rect = pygame.Rect(x_pos + btn_x, y_pos + y, btn_w, btn_h)
+            self.inspector_buttons.append((screen_rect, action))
+            
+            btn_x += btn_w + btn_gap
+        
         surface.blit(panel, (x_pos, y_pos))
     
     def _render_neural_activity(self):
@@ -1604,6 +1720,187 @@ class ResearchPlatform:
         self._spawn_initial_creatures(count=initial_count)
         
         self.console.add_line(f"=== NEW SIMULATION — {len(self.creatures)} creatures ===")
+    
+    def _render_species_panel(self, surface):
+        """Render species color table (critterding heritage).
+        
+        Shows each species with color swatch, population count, and adam distance.
+        Like the right panel in critterding beta13.
+        """
+        if not self.species_tracker.species:
+            return
+        
+        panel_width = 260
+        row_height = 16
+        header_height = 22
+        num_species = len(self.species_tracker.species)
+        panel_height = min(300, header_height + num_species * row_height + 10)
+        
+        x_pos = self.width - panel_width - 20
+        y_pos = 420  # Below graph panel
+        
+        # Background
+        panel = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
+        panel.fill((15, 15, 30, 210))
+        pygame.draw.rect(panel, (80, 120, 180), (0, 0, panel_width, panel_height), 2)
+        
+        # Header
+        header = self.small_font.render("#  Color  Population  Adam Dist", True, (180, 200, 255))
+        panel.blit(header, (8, 4))
+        
+        # Species rows sorted by population
+        sorted_species = sorted(
+            self.species_tracker.species.values(),
+            key=lambda s: len(s.member_ids),
+            reverse=True
+        )
+        
+        y = header_height
+        for i, species in enumerate(sorted_species[:16]):  # Max 16 rows
+            pop = len(species.member_ids)
+            if pop == 0:
+                continue
+            
+            # Color swatch
+            color = species.color
+            pygame.draw.rect(panel, color, (8, y + 2, 12, 12))
+            
+            # Compute avg adam distance for this species
+            avg_ad = 0
+            ad_count = 0
+            for creature in self.creatures:
+                if creature.creature_id in species.member_ids:
+                    avg_ad += getattr(creature, 'adam_distance', 0)
+                    ad_count += 1
+            avg_ad = avg_ad / max(1, ad_count)
+            
+            # Row text
+            row_text = f"{species.species_id:>3}  {'':5}  {pop:>5}       {avg_ad:>6.0f}"
+            text_surf = self.small_font.render(row_text, True, (200, 200, 200))
+            panel.blit(text_surf, (8, y))
+            
+            # Population bar
+            bar_width = min(40, pop * 3)
+            pygame.draw.rect(panel, color, (130, y + 3, bar_width, 10))
+            
+            y += row_height
+        
+        surface.blit(panel, (x_pos, y_pos))
+    
+    def _render_population_stats(self, surface):
+        """Render population aggregate statistics (critterding stats panel).
+        
+        Shows avg neurons, synapses, synapses/neuron, adam distance, body parts.
+        """
+        if not self.creatures:
+            return
+        
+        # Calculate aggregates
+        total_neurons = 0
+        total_synapses = 0
+        total_ad = 0
+        total_body_parts = 0
+        total_weight = 0.0
+        n = len(self.creatures)
+        
+        for c in self.creatures:
+            if hasattr(c, 'network'):
+                total_neurons += len(c.network.neurons)
+                total_synapses += len(c.network.synapses)
+            total_ad += getattr(c, 'adam_distance', 0)
+            if hasattr(c, 'body') and c.body:
+                total_body_parts += len(c.body.segments)
+                total_weight += sum(s.size * s.length for s in c.body.segments)
+        
+        avg_neurons = total_neurons / n
+        avg_synapses = total_synapses / n
+        avg_syn_per_neuron = avg_synapses / max(1, avg_neurons)
+        avg_ad = total_ad / n
+        avg_body_parts = total_body_parts / n
+        avg_weight = total_weight / n
+        
+        # Render compact stats block
+        stats_lines = [
+            ("brain", (100, 200, 255)),
+            (f"  avg neurons:      {avg_neurons:>8.2f}", (200, 200, 200)),
+            (f"  avg synapses:     {avg_synapses:>8.2f}", (200, 200, 200)),
+            (f"  avg syn/neuron:   {avg_syn_per_neuron:>8.2f}", (200, 200, 200)),
+            (f"  avg adam distance:{avg_ad:>8.2f}", (200, 200, 200)),
+            ("", (0, 0, 0)),
+            ("body", (100, 200, 255)),
+            (f"  avg body parts:   {avg_body_parts:>8.2f}", (200, 200, 200)),
+            (f"  avg weight:       {avg_weight:>8.2f}", (200, 200, 200)),
+        ]
+        
+        panel_width = 250
+        panel_height = len(stats_lines) * 14 + 12
+        
+        # Position below Circuit8 panel
+        panel_x = (self.width - panel_width) // 2
+        panel_y = 235  # Below Circuit8 (which is ~210px from top)
+        
+        panel = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
+        panel.fill((10, 15, 25, 200))
+        pygame.draw.rect(panel, (60, 90, 140), (0, 0, panel_width, panel_height), 1)
+        
+        y = 6
+        for text, color in stats_lines:
+            if text:
+                text_surf = self.small_font.render(text, True, color)
+                panel.blit(text_surf, (8, y))
+            y += 14
+        
+        surface.blit(panel, (panel_x, panel_y))
+    
+    def _inspector_button_action(self, action: str):
+        """Execute an inspector button action on the selected creature."""
+        c = self.selected_creature
+        if not c or c not in self.creatures:
+            self.selected_creature = None
+            return
+        
+        if action == 'kill':
+            self.creatures.remove(c)
+            self.logger.log_death(c, self.timestep, "manual_kill")
+            self.console.add_line(f"Killed creature {c.creature_id}")
+            self.selected_creature = None
+        
+        elif action == 'duplicate':
+            offspring_genotype = c.genotype.mutate(mutation_rate=0.5, max_mutations=50)
+            offspring_body = c.body.mutate(mutation_rate=0.3) if c.body else None
+            from creatures.collective_creature import CollectiveCreature
+            clone = CollectiveCreature(
+                genotype=offspring_genotype,
+                body=offspring_body,
+                x=c.x + np.random.uniform(-10, 10),
+                y=c.y + np.random.uniform(-10, 10),
+                z=c.z if hasattr(c, 'z') else 10.0,
+                initial_energy=c.energy.energy * 0.5,
+                circuit8=self.circuit8,
+                physics_world=self.physics_world,
+                collective_memory=self.collective_memory,
+            )
+            clone.generation = c.generation + 1
+            clone.adam_distance = c.adam_distance + 1
+            self.creatures.append(clone)
+            self.logger.log_reproduction(c, None, clone, self.timestep)
+            self.console.add_line(f"Duplicated creature {c.creature_id} -> {clone.creature_id}")
+        
+        elif action == 'feed':
+            c.energy.energy = min(c.energy.max_energy, c.energy.energy + 200000)
+            self.console.add_line(f"Fed creature {c.creature_id} (+200k energy)")
+        
+        elif action == 'brain_mutant':
+            c.genotype = c.genotype.mutate(mutation_rate=0.8, max_mutations=100)
+            self.logger.log_mutation(c, self.timestep, "brain mutant")
+            self.console.add_line(f"Brain mutated creature {c.creature_id}")
+        
+        elif action == 'body_mutant':
+            if c.body:
+                c.body = c.body.mutate(mutation_rate=0.8)
+                c.mesh = None  # Force mesh regeneration
+                self.logger.log_mutation(c, self.timestep, "body mutant")
+                self.console.add_line(f"Body mutated creature {c.creature_id}")
     
     def _render_velocity_vectors(self):
         """Render velocity vectors for moving creatures."""
