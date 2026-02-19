@@ -19,7 +19,7 @@ class NeuronType(Enum):
 
 class Neuron:
     """
-    Leaky integrate-and-fire neuron with plasticity.
+    Leaky integrate-and-fire neuron with plasticity and spike-frequency adaptation.
     
     Inspired by SDL neural visualizers where:
     - brain[z][0] = current potential
@@ -29,15 +29,26 @@ class Neuron:
     - Positive threshold: fires when potential >= threshold (excitation)
     - Negative threshold: fires when potential <= threshold (inhibition)
     
+    Spike-frequency adaptation (from looser.c):
+    - Threshold INCREASES by 10% when neuron fires (refractory period)
+    - Threshold HALVES when neuron is silent and threshold > min
+    - Creates self-regulating neurons: hyperactive ones slow down, silent ones wake up
+    
     Attributes:
         neuron_id: Unique identifier
         potential: Current membrane potential
         threshold: Firing threshold (positive or negative)
+        initial_threshold: Original threshold (for adaptation bounds)
         neuron_type: Type of neuron (regular, sensory, motor, inhibitory)
         is_plastic: Whether synapses can change strength
         last_fire_time: Last time this neuron fired (for STDP)
         leak_rate: Rate of potential decay (default 0.9)
     """
+    
+    # Spike-frequency adaptation parameters (from looser.c)
+    ADAPTATION_INCREASE = 1.1    # Threshold multiplier on fire (10% increase)
+    ADAPTATION_DECAY = 0.5       # Threshold multiplier when silent (halve)
+    ADAPTATION_MIN_THRESHOLD = 15.0  # Don't decay below this (from looser.c: if brain[z][1]>15)
     
     def __init__(
         self,
@@ -66,6 +77,7 @@ class Neuron:
         # From looser.c: brain[z][0]=(rand()%5000); brain[z][1]=700+(rand()%8000)
         self.potential = np.random.uniform(0, 5000)
         self.threshold = threshold if threshold is not None else 700 + np.random.uniform(0, 8000)
+        self.initial_threshold = self.threshold  # Store original for adaptation bounds
         
         # For STDP plasticity
         self.last_fire_time: Optional[float] = None
@@ -86,13 +98,16 @@ class Neuron:
         
     def update(self, time: float) -> bool:
         """
-        Update neuron state (leak and check for firing).
+        Update neuron state (leak, check for firing, adapt threshold).
         
         Supports bidirectional thresholds (Critterding2 innovation):
         - Positive threshold: fire when potential >= threshold
         - Negative threshold: fire when potential <= threshold
         
-        This allows neurons to specialize for excitation OR inhibition.
+        Spike-frequency adaptation (from looser.c):
+        - When neuron fires: threshold *= 1.1 (harder to fire again)
+        - When neuron is silent: threshold /= 2 (becomes more excitable)
+        - Self-regulating: hyperactive neurons slow down, silent ones wake up
         
         Args:
             time: Current simulation time
@@ -124,6 +139,17 @@ class Neuron:
         
         if self._fired_this_step:
             self.fire(time)
+            # Spike-frequency adaptation: INCREASE threshold on fire
+            # From looser.c: brain[z][1] *= 1.1
+            # Makes neuron harder to fire again (refractory-like behavior)
+            self.threshold *= self.ADAPTATION_INCREASE
+        else:
+            # Spike-frequency adaptation: DECAY threshold when silent
+            # From looser.c: if (brain[z][1] > 15) brain[z][1] >>= 1
+            # Makes silent neurons more excitable over time
+            abs_threshold = abs(self.threshold)
+            if abs_threshold > self.ADAPTATION_MIN_THRESHOLD:
+                self.threshold *= self.ADAPTATION_DECAY
             
         return self._fired_this_step
         

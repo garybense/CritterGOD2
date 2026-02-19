@@ -449,6 +449,11 @@ class CollectiveCreature(PhysicsCreature, PsychedelicVisionMixin, CompleteSensor
         # Update psychedelic vision (pattern generation to Circuit8)
         self.update_psychedelic_vision(self.timestep_counter)
         
+        # Pen-position drawing on Circuit8 (from looser.c)
+        # Motor neurons drive a drawing cursor, creating richer Circuit8 patterns
+        if hasattr(self, 'update_pen_position'):
+            self.update_pen_position()
+        
         # Check for reproduction opportunity
         offspring = self._attempt_reproduction()
         if offspring:

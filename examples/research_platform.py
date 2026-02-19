@@ -186,6 +186,7 @@ class ResearchPlatform:
         
         # Simulation state
         self.paused = False
+        self.extinct = False
         self.timestep = 0
         self.clock = pygame.time.Clock()
         self.target_fps = 60
@@ -334,7 +335,7 @@ class ResearchPlatform:
         self.console.add_line("Configure parameters with sliders (left panel)")
         self.console.add_line("Watch real-time statistics (top right)")
         self.console.add_line("Press Space to pause, R to reset camera")
-        self.console.add_line("Press 1/2/3 to load profiles, S to save")
+        self.console.add_line("Press 1-8 for render modes, H for help")
         self.console.add_line("Ready!")
     
     def _spawn_initial_creatures(self, count=15):
@@ -438,19 +439,18 @@ class ResearchPlatform:
         
         self.creatures = alive_creatures
         
-        # Handle reproduction
-        self._handle_reproduction()
-        
         # Population management (kill_half_if_needed handles creature removal and logging)
         if len(self.creatures) > self.max_population:
             killed = self.pop_manager.kill_half_if_needed(
                 self.creatures, self.max_population, self.timestep, self.logger
             )
         
-        # Spawn new creatures if population too low (append, don't replace)
-        if len(self.creatures) < 8:
-            needed = 8 - len(self.creatures)
-            self._spawn_initial_creatures(count=needed)
+        # Check for extinction
+        if len(self.creatures) == 0 and not self.extinct:
+            self.extinct = True
+            self.paused = True
+            self.console.add_line("*** EXTINCTION — All creatures have died ***")
+            self.console.add_line("Press N to start a new simulation")
         
         # Update statistics
         self._update_statistics()
@@ -463,61 +463,6 @@ class ResearchPlatform:
         if self.timestep % self.autosave_interval == 0:
             self.config.save_profile("autosave")
             self.console.add_line(f"Auto-saved at timestep {self.timestep}")
-    
-    def _handle_reproduction(self):
-        """Handle creature reproduction."""
-        proc_interval = int(self.config.get("creature_proc_interval"))
-        
-        for creature in self.creatures[:]:  # Copy list to avoid modification issues
-            if self.timestep % proc_interval == 0 and creature.can_reproduce():
-                # Find nearby mate
-                mate = self._find_mate(creature)
-                if mate:
-                    # Reproduce
-                    child_genotype = creature.genotype.mutate(
-                        mutation_rate=self.config.get("mutation_rate_neurons")
-                    )
-                    
-                    # Create child near parents
-                    world_w = int(self.config.get("world_size_x"))
-                    world_h = int(self.config.get("world_size_y"))
-                    children = create_collective_creatures(
-                        n_creatures=1,
-                        physics_world=self.physics_world,
-                        circuit8=self.circuit8,
-                        collective_memory=self.collective_memory,
-                        world_bounds=(-world_w/2, -world_h/2, world_w/2, world_h/2)
-                    )
-                    child = children[0]
-                    # Override position and energy
-                    child.x = creature.x + np.random.uniform(-10, 10)
-                    child.y = creature.y + np.random.uniform(-10, 10)
-                    child.energy.energy = creature.energy.energy * 0.5
-                    child.genotype = child_genotype
-                    child.generation = max(creature.generation, mate.generation) + 1
-                    child.adam_distance = (creature.adam_distance + mate.adam_distance) / 2 + 1
-                    child.birth_timestep = self.timestep
-                    
-                    self.creatures.append(child)
-                    
-                    # Pay energy cost
-                    creature.energy.energy *= 0.5
-                    mate.energy.energy *= 0.5
-                    
-                    # Log
-                    self.logger.log_reproduction(creature, mate, child, self.timestep)
-    
-    def _find_mate(self, creature):
-        """Find nearby mate for creature."""
-        for other in self.creatures:
-            if other is creature:
-                continue
-            
-            dist = np.sqrt((creature.x - other.x)**2 + (creature.y - other.y)**2)
-            if dist < 50 and other.can_reproduce():
-                return other
-        
-        return None
     
     def _update_statistics(self):
         """Update statistics tracker."""
@@ -571,23 +516,28 @@ class ResearchPlatform:
                     self.camera_zoom = 500.0
                     self.camera_angle = 55.0
                     self.console.add_line("Camera reset")
+                elif event.key == K_n:
+                    # Restart simulation with new creatures
+                    self._restart_simulation()
                 elif event.key == K_c:
                     self.show_circuit8 = not self.show_circuit8
                     self.console.add_line(f"Circuit8: {'visible' if self.show_circuit8 else 'hidden'}")
                 elif event.key == K_k:
-                    # Kill half
-                    killed = self.pop_manager.kill_half_if_needed(
-                        self.creatures, len(self.creatures), self.timestep, self.logger
-                    )
-                    self.console.add_line(f"Killed {len(killed)} creatures (weakest)")
+                    # Force kill half population (weakest by energy)
+                    if len(self.creatures) > 2:
+                        sorted_by_energy = sorted(self.creatures, key=lambda c: c.energy.energy)
+                        num_to_kill = len(self.creatures) // 2
+                        to_kill = sorted_by_energy[:num_to_kill]
+                        for c in to_kill:
+                            self.creatures.remove(c)
+                            self.logger.log_death(c, self.timestep, "manual_cull")
+                        self.console.add_line(f"Killed {num_to_kill} creatures (weakest)")
+                    else:
+                        self.console.add_line("Too few creatures to cull")
                 elif event.key == K_v:
-                    # Save profile (changed from S to avoid WASD conflict)
+                    # Save profile
                     self.config.save_profile("user_config")
                     self.console.add_line("Saved profile: user_config")
-                elif event.key == K_1:
-                    self.config.load_profile("default")
-                    self.config_panel._build_sliders()
-                    self.console.add_line("Loaded profile: default")
                 elif event.key == K_F5:
                     # Quick save
                     self.config.save_profile("quicksave")
@@ -641,11 +591,12 @@ class ResearchPlatform:
                     self.time_speed = min(10.0, self.time_speed * 1.5)
                     self.console.add_line(f"Time speed: {self.time_speed:.2f}x")
                 elif K_1 <= event.key <= K_8:
-                    # Switch render mode
+                    # Switch render mode (1-8)
                     self.render_mode = event.key - K_0
                     mode_names = ["", "Creatures", "Neural", "Circuit8", "Resources", 
                                   "Physics", "Signals", "Learning", "All"]
                     self.console.add_line(f"Render mode: {mode_names[self.render_mode]}")
+                    # 8=All is default, shows everything
                 elif event.key == K_9:
                     # Give drug to all (or selected) - Excitatory Agonist
                     if self.selected_creature:
@@ -756,11 +707,8 @@ class ResearchPlatform:
             0.0, 0.0, 1.0                 # Up vector (Z is up)
         )
         
-        # Render ground plane - Circuit8 when enabled, regular otherwise
-        if self.show_circuit8:
-            self._render_circuit8_ground()
-        else:
-            self._render_ground()
+        # Always render regular ground plane
+        self._render_ground()
         
         # Render collective signals (if enabled)
         if self.render_mode in [6, 8]:
@@ -858,6 +806,10 @@ class ResearchPlatform:
         self.graph_panel.render(ui_surface, self.font, self.small_font)
         self.console.render(ui_surface, self.small_font)
         
+        # Render Circuit8 panel (if enabled) - above the 3D world as a monitor
+        if self.show_circuit8:
+            self._render_circuit8_panel(ui_surface)
+        
         # Render stats overlay (center top)
         self._render_stats_overlay(ui_surface)
         
@@ -868,6 +820,10 @@ class ResearchPlatform:
         # Render creature inspector (if a creature is selected)
         if self.selected_creature:
             self._render_inspector_panel(ui_surface)
+        
+        # Render extinction overlay
+        if self.extinct:
+            self._render_extinction_overlay(ui_surface)
         
         # Render help overlay (if enabled)
         if self.show_help:
@@ -1413,61 +1369,45 @@ class ResearchPlatform:
         glDisable(GL_BLEND)
         glEnable(GL_LIGHTING)
     
-    def _render_circuit8_ground(self):
-        """Render Circuit8 as textured ground plane.
+    def _render_circuit8_panel(self, surface):
+        """Render Circuit8 as a 2D UI panel (telepathic canvas monitor).
         
-        Uses an OpenGL texture for the 64x48 canvas — much faster than
-        individual quads (one draw call instead of 3072).
+        Displays the 64x48 collective canvas as a scaled-up panel in the UI,
+        separate from the 3D world. This is the shared morphic field that
+        all creatures read/write to.
         """
-        glDisable(GL_DEPTH_TEST)
-        glDisable(GL_LIGHTING)
+        # Panel dimensions and position (top center, between config and graph panels)
+        panel_scale = 4  # 64*4=256 wide, 48*4=192 tall
+        panel_w = self.circuit8.width * panel_scale
+        panel_h = self.circuit8.height * panel_scale
+        panel_x = (self.width - panel_w) // 2
+        panel_y = 10  # Top of screen
         
-        world_w = int(self.config.get("world_size_x"))
-        world_h = int(self.config.get("world_size_y"))
-        hw = world_w / 2
-        hh = world_h / 2
+        # Background
+        bg = pygame.Surface((panel_w + 8, panel_h + 28), pygame.SRCALPHA)
+        bg.fill((20, 10, 40, 220))  # Dark purple background
+        surface.blit(bg, (panel_x - 4, panel_y - 4))
         
-        # Create Circuit8 texture if needed
-        if not hasattr(self, '_c8_texture'):
-            self._c8_texture = glGenTextures(1)
+        # Title
+        title = self.small_font.render("CIRCUIT8 — Telepathic Canvas", True, (180, 140, 255))
+        surface.blit(title, (panel_x + (panel_w - title.get_width()) // 2, panel_y - 2))
         
-        # Boost brightness: convert uint8 screen to brightened RGB
-        screen = self.circuit8.screen.astype(np.float32)  # (48, 64, 3)
+        # Render Circuit8 pixels to a pygame surface
+        c8_surface = pygame.Surface((self.circuit8.width, self.circuit8.height))
+        
+        # Boost brightness for visibility
+        screen = self.circuit8.screen.astype(np.float32)
         boosted = np.clip(screen * 2.0 + 8.0, 0, 255).astype(np.uint8)
         
-        # Upload as texture (64x48 RGB)
-        glBindTexture(GL_TEXTURE_2D, self._c8_texture)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)  # Pixelated look
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB,
-                     self.circuit8.width, self.circuit8.height, 0,
-                     GL_RGB, GL_UNSIGNED_BYTE, boosted.tobytes())
+        # Copy pixel data to surface
+        pygame.surfarray.blit_array(c8_surface, boosted.transpose(1, 0, 2))
         
-        # Draw textured ground quad
-        glEnable(GL_TEXTURE_2D)
-        glColor3f(1.0, 1.0, 1.0)  # Full brightness (texture provides color)
-        glBegin(GL_QUADS)
-        glTexCoord2f(0, 0); glVertex3f(-hw, -hh, 0.0)
-        glTexCoord2f(1, 0); glVertex3f(hw, -hh, 0.0)
-        glTexCoord2f(1, 1); glVertex3f(hw, hh, 0.0)
-        glTexCoord2f(0, 1); glVertex3f(-hw, hh, 0.0)
-        glEnd()
-        glDisable(GL_TEXTURE_2D)
-        glBindTexture(GL_TEXTURE_2D, 0)
+        # Scale up with nearest-neighbor (pixelated look)
+        scaled = pygame.transform.scale(c8_surface, (panel_w, panel_h))
+        surface.blit(scaled, (panel_x, panel_y + 18))
         
-        # Subtle border
-        glColor3f(0.3, 0.3, 0.5)
-        glLineWidth(2.0)
-        glBegin(GL_LINE_LOOP)
-        glVertex3f(-hw, -hh, 0.1)
-        glVertex3f(hw, -hh, 0.1)
-        glVertex3f(hw, hh, 0.1)
-        glVertex3f(-hw, hh, 0.1)
-        glEnd()
-        glLineWidth(1.0)
-        
-        glEnable(GL_DEPTH_TEST)
-        glEnable(GL_LIGHTING)
+        # Border
+        pygame.draw.rect(surface, (120, 80, 200), (panel_x - 2, panel_y + 16, panel_w + 4, panel_h + 4), 2)
     
     def _render_collective_signals(self):
         """Render collective memory markers."""
@@ -1571,6 +1511,7 @@ class ResearchPlatform:
             "  Space: Pause/unpause",
             "  [/]: Slow/speed time (0.1x-10x)",
             "  K: Kill half population",
+            "  N: New simulation (restart)",
             "",
             "INTERACTIVE:",
             "  F: Spawn food | D: Spawn drug mushroom",
@@ -1585,7 +1526,7 @@ class ResearchPlatform:
             "  H: Toggle this help",
             "",
             "CONFIG:",
-            "  1: Load default | V: Save config",
+            "  V: Save config",
             "  F5: Quick save | F9: Quick load",
             "",
             "Press H to close",
@@ -1609,6 +1550,60 @@ class ResearchPlatform:
             else:
                 text = self.small_font.render(line, True, (200, 200, 200))
             surface.blit(text, (x + 10, y + 10 + i * 22))
+    
+    def _render_extinction_overlay(self, surface):
+        """Render extinction message overlay."""
+        # Dark overlay
+        overlay = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 150))
+        surface.blit(overlay, (0, 0))
+        
+        # Extinction message box
+        box_w, box_h = 400, 120
+        box_x = (self.width - box_w) // 2
+        box_y = (self.height - box_h) // 2
+        
+        bg = pygame.Surface((box_w, box_h), pygame.SRCALPHA)
+        bg.fill((80, 10, 10, 230))
+        surface.blit(bg, (box_x, box_y))
+        pygame.draw.rect(surface, (255, 60, 60), (box_x, box_y, box_w, box_h), 3)
+        
+        # Text
+        title = self.font.render("EXTINCTION", True, (255, 80, 80))
+        surface.blit(title, (box_x + (box_w - title.get_width()) // 2, box_y + 15))
+        
+        msg = self.small_font.render("All creatures have died.", True, (220, 180, 180))
+        surface.blit(msg, (box_x + (box_w - msg.get_width()) // 2, box_y + 50))
+        
+        restart = self.font.render("Press N to start new simulation", True, (255, 255, 100))
+        surface.blit(restart, (box_x + (box_w - restart.get_width()) // 2, box_y + 80))
+    
+    def _restart_simulation(self):
+        """Restart simulation with fresh creatures."""
+        # Clear old creatures and their physics bodies
+        for creature in self.creatures:
+            if hasattr(creature, 'rigid_body') and creature.rigid_body and self.physics_world:
+                self.physics_world.remove_body(creature.rigid_body.id)
+        self.creatures.clear()
+        
+        # Reset state
+        self.timestep = 0
+        self.extinct = False
+        self.paused = False
+        self.collision_count = 0
+        
+        # Reset Circuit8
+        self.circuit8.screen[:] = 0
+        
+        # Respawn resources
+        self.resource_manager.resources.clear()
+        self.resource_manager.spawn_initial_resources()
+        
+        # Spawn fresh creatures
+        initial_count = int(self.config.get("initial_population"))
+        self._spawn_initial_creatures(count=initial_count)
+        
+        self.console.add_line(f"=== NEW SIMULATION — {len(self.creatures)} creatures ===")
     
     def _render_velocity_vectors(self):
         """Render velocity vectors for moving creatures."""

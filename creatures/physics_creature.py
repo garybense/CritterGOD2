@@ -77,9 +77,9 @@ class PhysicsCreature(BehavioralCreature):
         self.physics_world = physics_world
         self.rigid_body: Optional[RigidBody] = None
         
-        # Motor control parameters - reduced for calmer movement
-        self.motor_force_scale = 1.0  # Neural output → force conversion (reduced for stability)
-        self.max_force = 5.0  # Maximum force per timestep (reduced for stability)
+        # Motor control parameters
+        self.motor_force_scale = 15.0  # Neural output → force conversion
+        self.max_force = 20.0  # Maximum force per timestep
         
         # Collision state
         self.colliding_with_resource = False

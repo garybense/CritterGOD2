@@ -33,6 +33,13 @@ class CompleteSensoryMixin:
     - Drug-modulated vision (altered perception → altered behavior)
     """
     
+    # Critterdrug heritage sensor counts (from map-retinal-sensors.py)
+    ENERGY_BAR_SENSORS = 10   # 10 segmented energy bar sensors (IDs 30000-30009)
+    AGE_BAR_SENSORS = 10      # 10 segmented age bar sensors (IDs 40000-40009)
+    # Touch sensors: touchingfood=10000, touchingcritter=10001, touchingpill=10002
+    # canProcreate=20000
+    NUM_HERITAGE_SENSORS = ENERGY_BAR_SENSORS + AGE_BAR_SENSORS + 3 + 1  # 24 total
+    
     def init_complete_senses(
         self,
         enable_vision: bool = True,
@@ -41,6 +48,12 @@ class CompleteSensoryMixin:
     ):
         """
         Initialize complete sensory apparatus.
+        
+        Includes critterdrug heritage sensors (from map-retinal-sensors.py):
+        - 10 energy bar sensors (segmented battery display)
+        - 10 age bar sensors (life progress)
+        - Touch sensors: touchingFood, touchingCreature, touchingPill
+        - canProcreate sensor
         
         Args:
             enable_vision: Enable retinal vision system
@@ -77,6 +90,23 @@ class CompleteSensoryMixin:
             'pleasure': 0.0,    # Drug effects, success
             'arousal': 0.0      # General excitation level
         }
+        
+        # Critterdrug heritage sensors (from map-retinal-sensors.py)
+        # These give the neural network much more specific inputs to learn from
+        self.heritage_sensors = {
+            'energy_bar': np.zeros(self.ENERGY_BAR_SENSORS),  # Segmented energy display
+            'age_bar': np.zeros(self.AGE_BAR_SENSORS),        # Segmented age display
+            'touching_food': 0.0,      # Binary: is creature touching food?
+            'touching_creature': 0.0,  # Binary: is creature touching another creature?
+            'touching_pill': 0.0,      # Binary: is creature touching a drug mushroom?
+            'can_procreate': 0.0,      # Binary: can creature reproduce right now?
+        }
+        
+        # Pen-position motor system (from looser.c lines 227-246)
+        # Each creature has a drawing cursor on Circuit8
+        # Motor neurons control pen position; sensors read at pen position
+        self.pen_x = 0.0  # Pen X position on Circuit8 (0..width)
+        self.pen_y = 0.0  # Pen Y position on Circuit8 (0..height)
     
     def sense_environment(self):
         """
@@ -97,6 +127,9 @@ class CompleteSensoryMixin:
         
         # Chemical senses
         self._sense_chemistry()
+        
+        # Critterdrug heritage sensors
+        self._sense_heritage()
     
     def inject_senses_to_brain(self):
         """
@@ -161,7 +194,35 @@ class CompleteSensoryMixin:
                 sensory_neurons[idx].add_input(activation)
                 idx += 1
         
-        # 5. Fill remaining with noise (prevents dead neurons, adds stochasticity)
+        # 5. HERITAGE SENSORS (critterdrug: energy bar, age bar, touch, procreation)
+        # Energy bar: 10 segments, each lights up as energy fills
+        for val in self.heritage_sensors['energy_bar']:
+            if idx >= len(sensory_neurons):
+                break
+            sensory_neurons[idx].add_input(val * 1000.0)
+            idx += 1
+        
+        # Age bar: 10 segments
+        for val in self.heritage_sensors['age_bar']:
+            if idx >= len(sensory_neurons):
+                break
+            sensory_neurons[idx].add_input(val * 1000.0)
+            idx += 1
+        
+        # Touch sensors (binary, strong signal)
+        touch_vals = [
+            self.heritage_sensors['touching_food'] * 5000.0,
+            self.heritage_sensors['touching_creature'] * 5000.0,
+            self.heritage_sensors['touching_pill'] * 5000.0,
+            self.heritage_sensors['can_procreate'] * 5000.0,
+        ]
+        for val in touch_vals:
+            if idx >= len(sensory_neurons):
+                break
+            sensory_neurons[idx].add_input(val)
+            idx += 1
+        
+        # 6. Fill remaining with noise (prevents dead neurons, adds stochasticity)
         while idx < len(sensory_neurons):
             noise = np.random.uniform(50.0, 250.0)
             sensory_neurons[idx].add_input(noise)
@@ -224,6 +285,132 @@ class CompleteSensoryMixin:
         # Drug levels automatically available through self.drugs.tripping
         # This gets injected in inject_senses_to_brain()
         pass
+    
+    def _sense_heritage(self):
+        """
+        Update critterdrug heritage sensors.
+        
+        From map-retinal-sensors.py:
+        - Energy bar: 10 segments, each lights up as energy fills (like a battery)
+        - Age bar: 10 segments, fills as creature ages toward max age
+        - Touch sensors: binary signals for touching food/creature/pill
+        - canProcreate: binary, can this creature reproduce right now?
+        
+        These give the neural network very specific, dedicated inputs that
+        are easier to evolve useful behaviors around than generic values.
+        """
+        # Energy bar: segmented battery display (10 segments)
+        # Each segment lights up as energy increases
+        if hasattr(self, 'energy'):
+            energy_ratio = self.energy.energy / max(1.0, self.energy.max_energy)
+            for i in range(self.ENERGY_BAR_SENSORS):
+                # Segment i lights up when energy > i/10
+                threshold = (i + 1) / self.ENERGY_BAR_SENSORS
+                self.heritage_sensors['energy_bar'][i] = 1.0 if energy_ratio >= threshold else 0.0
+        
+        # Age bar: fills as creature approaches max age (18000 from heritage)
+        max_age = 18000.0  # From critterdrug heritage
+        if hasattr(self, 'age'):
+            age_ratio = min(1.0, self.age / max_age)
+            for i in range(self.AGE_BAR_SENSORS):
+                threshold = (i + 1) / self.AGE_BAR_SENSORS
+                self.heritage_sensors['age_bar'][i] = 1.0 if age_ratio >= threshold else 0.0
+        
+        # Touch sensors (from collision state)
+        if hasattr(self, 'colliding_with_resource') and self.colliding_with_resource:
+            # Check resource type
+            self.heritage_sensors['touching_food'] = 1.0
+        else:
+            self.heritage_sensors['touching_food'] = 0.0
+        
+        if hasattr(self, 'colliding_with_creature') and self.colliding_with_creature:
+            self.heritage_sensors['touching_creature'] = 1.0
+        else:
+            self.heritage_sensors['touching_creature'] = 0.0
+        
+        # Touching pill (drug mushroom) - detected via drug system
+        if hasattr(self, 'drugs'):
+            # If any drug level increased recently, we're touching a pill
+            total_trip = np.sum(self.drugs.tripping)
+            self.heritage_sensors['touching_pill'] = 1.0 if total_trip > 0.5 else 0.0
+        
+        # Can procreate sensor
+        if hasattr(self, 'can_reproduce'):
+            self.heritage_sensors['can_procreate'] = 1.0 if self.can_reproduce() else 0.0
+    
+    def update_pen_position(self):
+        """
+        Update pen position from motor neurons and draw on Circuit8.
+        
+        From looser.c lines 227-246: Each creature has a pen (x,y) cursor
+        on Circuit8. Motor neurons control pen movement:
+        - 2 motors: pen X movement (add/subtract from pen_x)
+        - 2 motors: pen Y movement (add/subtract from pen_y)
+        
+        The pen draws at its position on Circuit8 while retinal sensors
+        read from the pen position. This creates a more expressive
+        draw-and-read feedback loop than writing at the creature's
+        world position.
+        
+        Call AFTER network.update(), as it reads motor outputs.
+        """
+        if not hasattr(self, 'circuit8') or self.circuit8 is None:
+            return
+        if not hasattr(self, 'motor_outputs') or len(self.motor_outputs) < 8:
+            return
+        
+        # Use motor outputs 4-7 for pen control (0-3 used for physical movement)
+        # Motor 4: pen X forward, Motor 5: pen X backward
+        # Motor 6: pen Y forward, Motor 7: pen Y backward
+        pen_dx = (self.motor_outputs[4] - self.motor_outputs[5]) * 2.0
+        pen_dy = (self.motor_outputs[6] - self.motor_outputs[7]) * 2.0
+        
+        self.pen_x = (self.pen_x + pen_dx) % self.circuit8.width
+        self.pen_y = (self.pen_y + pen_dy) % self.circuit8.height
+        
+        # Draw at pen position using screen motors (condensed color ops)
+        px = int(self.pen_x) % self.circuit8.width
+        py = int(self.pen_y) % self.circuit8.height
+        
+        if hasattr(self, 'screen_motors') and len(self.screen_motors) >= 6:
+            # RuRdGuGdBuBd control from screen motors
+            r_change = self.screen_motors[0] - self.screen_motors[1]
+            g_change = self.screen_motors[2] - self.screen_motors[3]
+            b_change = self.screen_motors[4] - self.screen_motors[5]
+            
+            # Drug amplification
+            drug_amp = 1.0
+            if hasattr(self, 'drugs'):
+                trip_level = np.sum(self.drugs.tripping) / max(1.0, self.drugs.max_trip)
+                drug_amp = 1.0 + trip_level * 5.0
+            
+            scale = 15.0 * drug_amp
+            
+            current_r, current_g, current_b = self.circuit8.read_pixel(px, py)
+            new_r = np.clip(current_r + r_change * scale, 0, 255)
+            new_g = np.clip(current_g + g_change * scale, 0, 255)
+            new_b = np.clip(current_b + b_change * scale, 0, 255)
+            
+            self.circuit8.write_pixel(px, py, int(new_r), int(new_g), int(new_b), blend=False)
+    
+    def read_at_pen_position(self) -> Optional[np.ndarray]:
+        """
+        Read Circuit8 at pen position (retinal sensors at pen location).
+        
+        From looser.c lines 281-292: Each finger reads a vertical strip
+        of the screen at its pen position. This returns the RGB values
+        at the pen position for injection into sensory neurons.
+        
+        Returns:
+            RGB array at pen position or None
+        """
+        if not hasattr(self, 'circuit8') or self.circuit8 is None:
+            return None
+        
+        px = int(self.pen_x) % self.circuit8.width
+        py = int(self.pen_y) % self.circuit8.height
+        r, g, b = self.circuit8.read_pixel(px, py)
+        return np.array([r, g, b], dtype=np.float32)
     
     def get_visual_focus(self) -> Optional[tuple]:
         """

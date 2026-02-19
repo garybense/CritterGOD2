@@ -78,14 +78,34 @@ class Synapse:
         # Apply weight clamping immediately
         self._clamp_weight()
         
+    # Asymmetric bidirectional propagation ratio (from looser.c)
+    # Forward: full weight, Backward: half weight
+    # looser.c: brain[z][0] += df[target] << 1 (forward 2x)
+    #           brain[target][0] += df[z]       (backward 1x)
+    # We use forward=1.0, backward=0.5 for equivalent 2:1 ratio
+    REVERSE_PROPAGATION_RATIO = 0.5
+    
     def propagate(self):
         """
-        Propagate signal from pre to post neuron.
+        Propagate signal from pre to post neuron (forward direction).
         
         If pre-neuron fired, add weighted input to post-neuron.
         """
         if self.pre_neuron.did_fire():
             self.post_neuron.add_input(self.weight)
+    
+    def propagate_reverse(self):
+        """
+        Propagate signal from post to pre neuron (backward direction).
+        
+        From looser.c lines 308-310: Synapses are bidirectional.
+        Forward propagation is at full weight, backward at half weight.
+        This asymmetry creates richer signal flow through the network.
+        
+        If post-neuron fired, add half-weighted input to pre-neuron.
+        """
+        if self.post_neuron.did_fire():
+            self.pre_neuron.add_input(self.weight * self.REVERSE_PROPAGATION_RATIO)
     
     def update(self, dt: float = 1.0):
         """
