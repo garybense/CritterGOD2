@@ -264,7 +264,7 @@ class ResearchPlatform:
             mode='mixed',
             amplitude_scale=0.3,
         )
-        self.audio_mode_names = ['potential', 'firing', 'mixed']
+        self.audio_mode_names = ['potential', 'firing', 'mixed', 'flamoot']
         self.audio_mode_index = 2
         self.sound_queue = []
         self.show_help = False
@@ -579,7 +579,7 @@ class ResearchPlatform:
                         self.console.add_line("Audio: OFF")
                 elif event.key == K_m:
                     # Cycle audio modes
-                    self.audio_mode_index = (self.audio_mode_index + 1) % 3
+                    self.audio_mode_index = (self.audio_mode_index + 1) % len(self.audio_mode_names)
                     self.audio_synth.mode = self.audio_mode_names[self.audio_mode_index]
                     self.console.add_line(f"Audio mode: {self.audio_synth.mode}")
                 elif event.key == K_LEFTBRACKET:

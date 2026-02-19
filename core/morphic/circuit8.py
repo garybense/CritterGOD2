@@ -167,21 +167,30 @@ class Circuit8:
         
         return tuple(self.depth_buffer[y, x, depth])
         
-    def vote_movement(self, direction: str):
+    def vote_movement(self, direction: str, weight: int = 1):
         """
         Vote for screen movement (collective decision).
         
+        Supports weighted voting tiers (from telepathic-critterdrug):
+        - Tier 1 (weight=1): normal vote, default
+        - Tier 2 (weight=3): strong motor output
+        - Tier 3 (weight=7): very strong motor output
+        
+        Creatures with stronger neural conviction get louder voices
+        in the collective democratic process.
+        
         Args:
             direction: 'up', 'down', 'left', 'right'
+            weight: Vote weight (default 1)
         """
         if direction == 'up':
-            self.votes_up += 1
+            self.votes_up += weight
         elif direction == 'down':
-            self.votes_down += 1
+            self.votes_down += weight
         elif direction == 'left':
-            self.votes_left += 1
+            self.votes_left += weight
         elif direction == 'right':
-            self.votes_right += 1
+            self.votes_right += weight
             
     def apply_voted_movement(self):
         """
@@ -262,6 +271,26 @@ class Circuit8:
             float(np.mean(region[:, :, 2]))
         )
         
+    def global_color_shift(self, r_delta: int, g_delta: int, b_delta: int):
+        """
+        Apply a global color shift to the entire canvas.
+        
+        From telepathic-critterdrug condensed colour motors:
+        When a creature's screen motor fires very strongly, it affects
+        the entire shared perception field — not just its pixel.
+        
+        Args:
+            r_delta: Red channel shift (-255 to 255)
+            g_delta: Green channel shift (-255 to 255)
+            b_delta: Blue channel shift (-255 to 255)
+        """
+        # Use int16 to avoid overflow, then clip
+        shifted = self.screen.astype(np.int16)
+        shifted[:, :, 0] += r_delta
+        shifted[:, :, 1] += g_delta
+        shifted[:, :, 2] += b_delta
+        self.screen = np.clip(shifted, 0, 255).astype(np.uint8)
+    
     def clear(self):
         """Clear the canvas to black."""
         self.screen.fill(0)

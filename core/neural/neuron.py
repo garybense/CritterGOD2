@@ -82,10 +82,11 @@ class Neuron:
         # For STDP plasticity
         self.last_fire_time: Optional[float] = None
         
-        # Track if neuron fired this timestep
-        self._fired_this_step = False
+        # Track if neuron fired this timestep (0.0 = no fire, >0 = firing magnitude)
+        # From cdd.c: df[z] stores magnitude, not just boolean
+        self._fired_this_step = 0.0
         # Snapshot of previous step's fired state (available after network.update())
-        self._fired_last_step = False
+        self._fired_last_step = 0.0
         
     def add_input(self, amount: float):
         """
@@ -119,39 +120,47 @@ class Neuron:
         self.potential *= self.leak_rate
         
         # Bidirectional threshold check (Critterding2 feature)
+        fired = False
         if self.threshold > 0:
             # Positive threshold: fire on excitation
-            self._fired_this_step = self.potential >= self.threshold
+            fired = self.potential >= self.threshold
             
             # Clamp negative accumulation
             if self.potential < 0:
                 self.potential = 0.0
         elif self.threshold < 0:
             # Negative threshold: fire on inhibition
-            self._fired_this_step = self.potential <= self.threshold
+            fired = self.potential <= self.threshold
             
             # Clamp positive accumulation
             if self.potential > 0:
                 self.potential = 0.0
-        else:
-            # Zero threshold: never fire (shouldn't happen normally)
-            self._fired_this_step = False
         
-        if self._fired_this_step:
+        if fired:
+            # Compute firing magnitude (from cdd.c: df[z] encodes strength)
+            # magnitude = (threshold/1000 + 1) * (potential/threshold)
+            abs_thresh = abs(self.threshold)
+            if abs_thresh > 0:
+                self._fired_this_step = (abs_thresh / 1000.0 + 1.0) * abs(self.potential / abs_thresh)
+            else:
+                self._fired_this_step = 1.0
             self.fire(time)
             # Spike-frequency adaptation: INCREASE threshold on fire
             # From looser.c: brain[z][1] *= 1.1
-            # Makes neuron harder to fire again (refractory-like behavior)
             self.threshold *= self.ADAPTATION_INCREASE
         else:
+            self._fired_this_step = 0.0
             # Spike-frequency adaptation: DECAY threshold when silent
             # From looser.c: if (brain[z][1] > 15) brain[z][1] >>= 1
-            # Makes silent neurons more excitable over time
             abs_threshold = abs(self.threshold)
             if abs_threshold > self.ADAPTATION_MIN_THRESHOLD:
                 self.threshold *= self.ADAPTATION_DECAY
             
-        return self._fired_this_step
+            # Bit-shift decay of potential (from looser.c: brain[z][0] >>= 2)
+            # Rapid multiplicative decay — neurons must receive continuous input
+            self.potential *= 0.25
+            
+        return self._fired_this_step > 0
         
     def fire(self, time: float):
         """
@@ -165,17 +174,30 @@ class Neuron:
         
     def did_fire(self) -> bool:
         """Check if neuron fired during the current integration step (before reset)."""
+        return self._fired_this_step > 0
+    
+    def fire_magnitude(self) -> float:
+        """Get firing magnitude (0.0 = didn't fire, >0 = firing strength).
+        
+        From cdd.c: df[z] stores computed magnitude, not just boolean.
+        Stronger firings produce larger magnitudes, affecting synapse
+        propagation and audio/visual generation.
+        """
         return self._fired_this_step
+    
+    def last_fire_magnitude(self) -> float:
+        """Get firing magnitude from most recent completed step."""
+        return self._fired_last_step
         
     def fired_last_step(self) -> bool:
         """Check if neuron fired in the most recent completed step (after update)."""
-        return self._fired_last_step
+        return self._fired_last_step > 0
         
     def reset_fire_state(self):
         """Reset the fired state (called at end of timestep)."""
         # Preserve snapshot for external consumers after update
         self._fired_last_step = self._fired_this_step
-        self._fired_this_step = False
+        self._fired_this_step = 0.0
         
     def is_inhibitory(self) -> bool:
         """Check if this is an inhibitory neuron."""

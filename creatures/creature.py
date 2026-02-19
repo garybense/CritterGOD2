@@ -213,27 +213,53 @@ class Creature:
             # Scale factor: balanced channels with moderate write strength
             scale = 10.0 * drug_amp
             
-            current_r, current_g, current_b = self.circuit8.read_pixel(pixel_x, pixel_y)
-            new_r = np.clip(current_r + r_change * scale, 0, 255)
-            new_g = np.clip(current_g + g_change * scale, 0, 255)
-            new_b = np.clip(current_b + b_change * scale, 0, 255)
+            # Condensed colour motors (from telepathic-critterdrug):
+            # When motor output exceeds threshold, apply GLOBAL color shift
+            # instead of just per-pixel write. Strong neural conviction
+            # affects the entire collective perception field.
+            global_threshold = 1.5  # Strong firing needed for global effect
+            if abs(r_change) > global_threshold or abs(g_change) > global_threshold or abs(b_change) > global_threshold:
+                # Global shift is weaker (1/4 of local) but affects everything
+                g_scale = scale * 0.25
+                self.circuit8.global_color_shift(
+                    int(r_change * g_scale),
+                    int(g_change * g_scale),
+                    int(b_change * g_scale)
+                )
+            else:
+                # Normal per-pixel write
+                current_r, current_g, current_b = self.circuit8.read_pixel(pixel_x, pixel_y)
+                new_r = np.clip(current_r + r_change * scale, 0, 255)
+                new_g = np.clip(current_g + g_change * scale, 0, 255)
+                new_b = np.clip(current_b + b_change * scale, 0, 255)
+                
+                self.circuit8.write_pixel(pixel_x, pixel_y, int(new_r), int(new_g), int(new_b), blend=False)
             
-            self.circuit8.write_pixel(pixel_x, pixel_y, int(new_r), int(new_g), int(new_b), blend=False)
-            
-        # Collective voting (simplified: based on motor outputs)
-        self.vote_dx = int(np.sign(self.motor_outputs[0] - self.motor_outputs[1]))
-        self.vote_dy = int(np.sign(self.motor_outputs[2] - self.motor_outputs[3]))
+        # Collective voting with weighted tiers (from telepathic-critterdrug)
+        # Motor output strength determines vote weight:
+        #   weak (<0.3): tier 1 (weight 1)
+        #   medium (0.3-0.7): tier 2 (weight 3)
+        #   strong (>0.7): tier 3 (weight 7)
+        motor_x = self.motor_outputs[0] - self.motor_outputs[1]
+        motor_y = self.motor_outputs[2] - self.motor_outputs[3]
+        self.vote_dx = int(np.sign(motor_x))
+        self.vote_dy = int(np.sign(motor_y))
         
         if self.circuit8 is not None:
-            # Vote based on motor output directions
+            # Determine vote weight from motor strength
+            x_strength = abs(motor_x)
+            y_strength = abs(motor_y)
+            x_weight = 7 if x_strength > 0.7 else (3 if x_strength > 0.3 else 1)
+            y_weight = 7 if y_strength > 0.7 else (3 if y_strength > 0.3 else 1)
+            
             if self.vote_dx > 0:
-                self.circuit8.vote_movement('right')
+                self.circuit8.vote_movement('right', weight=x_weight)
             elif self.vote_dx < 0:
-                self.circuit8.vote_movement('left')
+                self.circuit8.vote_movement('left', weight=x_weight)
             if self.vote_dy > 0:
-                self.circuit8.vote_movement('down')
+                self.circuit8.vote_movement('down', weight=y_weight)
             elif self.vote_dy < 0:
-                self.circuit8.vote_movement('up')
+                self.circuit8.vote_movement('up', weight=y_weight)
             
         # Pay metabolic costs
         num_firing = sum(1 for n in self.network.neurons if n.fired_last_step())

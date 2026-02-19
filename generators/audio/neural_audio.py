@@ -75,6 +75,8 @@ class NeuralAudioSynthesizer:
             return self._synthesize_potential(network, num_samples)
         elif self.mode == 'firing':
             return self._synthesize_firing(network, num_samples)
+        elif self.mode == 'flamoot':
+            return self._synthesize_flamoot(network, num_samples)
         else:  # mixed
             return self._synthesize_mixed(network, num_samples)
 
@@ -174,6 +176,67 @@ class NeuralAudioSynthesizer:
         # Mix: 60% potential, 40% firing
         return 0.6 * potential_audio + 0.4 * firing_audio
 
+    def _synthesize_flamoot(
+        self,
+        network: NeuralNetwork,
+        num_samples: int,
+    ) -> np.ndarray:
+        """
+        Synthesize audio using exact flamoot algorithm from looser.c/xesu.c.
+        
+        The original generates a 256-byte waveform by sampling neurons at
+        logarithmic indices: neuron_idx = n_neurons / z for z=2..258.
+        Each sample = potential / threshold, scaled by mystery params.
+        The 256-byte buffer is tiled to fill the audio output.
+        
+        From looser.c lines 324-333:
+            for (z = 2; z < 258; z++) {
+                Uint32 nue = (nn/z);
+                Uint16 pot = brain[nue][0];
+                if (pot > brain[nue][1]) pot = brain[nue][1];
+                pot = (pot / brain[nue][1] * 16.0) << (pur&7);
+                wav_buffer[z-2] = (Uint8) pot;
+            }
+        """
+        n_neurons = len(network.neurons)
+        if n_neurons < 3:
+            return np.zeros(num_samples, dtype=np.float32)
+        
+        # Generate 256-sample waveform from neuron state (flamoot algorithm)
+        waveform = np.zeros(256, dtype=np.float32)
+        
+        for z in range(2, 258):
+            # Logarithmic neuron sampling: higher z = lower-index neurons
+            neuron_idx = n_neurons // z
+            neuron_idx = min(neuron_idx, n_neurons - 1)
+            
+            neuron = network.neurons[neuron_idx]
+            
+            # Clamp potential to threshold
+            pot = abs(neuron.potential)
+            thresh = abs(neuron.threshold)
+            if thresh < 1.0:
+                thresh = 1.0
+            if pot > thresh:
+                pot = thresh
+            
+            # Scale: potential/threshold * 16, normalized to [-1, 1]
+            # Original uses bit shifts; we use float equivalent
+            scaled = (pot / thresh) * 16.0
+            
+            # Add firing magnitude contribution for richer sound
+            fire_mag = neuron.last_fire_magnitude() if hasattr(neuron, 'last_fire_magnitude') else 0.0
+            scaled += fire_mag * 2.0
+            
+            # Normalize to [-1, 1] range (original was 0-255 uint8)
+            waveform[z - 2] = (scaled / 16.0) * 2.0 - 1.0
+        
+        # Tile the 256-sample waveform to fill the output buffer
+        tiles = (num_samples // 256) + 1
+        tiled = np.tile(waveform, tiles)[:num_samples]
+        
+        return tiled * self.amplitude_scale
+    
     def synthesize_from_activity(
         self,
         firing_count: int,

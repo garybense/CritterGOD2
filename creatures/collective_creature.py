@@ -429,6 +429,11 @@ class CollectiveCreature(PhysicsCreature, PsychedelicVisionMixin, CompleteSensor
         if self.timestep_counter % 20 == 0 and self.markov:
             thought = self.markov.generate_and_evolve(max_length=8)
             if thought:
+                # Apply fibonacci reordering from flamoot's numerolit.py
+                # Creates hidden mathematical structure in creature language
+                from generators.markov.fibonacci_reorder import reorder_text
+                method = 3 if self.timestep_counter % 40 == 0 else 4
+                thought = reorder_text(thought, method=method)
                 self.last_thought = thought
         
         # Auto-enable psychedelic pattern generation when tripping
