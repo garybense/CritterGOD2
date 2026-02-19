@@ -257,7 +257,7 @@ class BehaviorReader:
                     # Detect signal types based on color
                     signal = self._classify_signal(r, g, b)
                     if signal is not None:
-                        intensity = (r + g + b) / (3 * 255)
+                        intensity = (int(r) + int(g) + int(b)) / (3 * 255)
                         detected_signals.append({
                             'type': signal,
                             'intensity': intensity,

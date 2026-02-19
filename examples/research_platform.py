@@ -268,6 +268,7 @@ class ResearchPlatform:
         self.audio_mode_index = 2
         self.sound_queue = []
         self.show_help = False
+        self.show_brain_view = False  # Brain visualization (B key, critterding brainview)
         
         # Mouse drag state for camera
         self.mouse_dragging = False
@@ -611,6 +612,10 @@ class ResearchPlatform:
                         self.console.add_line(f"Audio: ON (mode: {self.audio_synth.mode})")
                     else:
                         self.console.add_line("Audio: OFF")
+                elif event.key == K_b:
+                    # Toggle brain visualization (critterding brainview)
+                    self.show_brain_view = not self.show_brain_view
+                    self.console.add_line("Brain view: " + ("ON" if self.show_brain_view else "OFF"))
                 elif event.key == K_m:
                     # Cycle audio modes
                     self.audio_mode_index = (self.audio_mode_index + 1) % len(self.audio_mode_names)
@@ -863,6 +868,10 @@ class ResearchPlatform:
         if self.show_thoughts and hasattr(self, '_thoughts_to_render'):
             self._render_thought_bubbles(ui_surface)
         
+        # Render brain visualization (if enabled and creature selected)
+        if self.show_brain_view and self.selected_creature:
+            self._render_brain_view(ui_surface)
+        
         # Render species color table (right side, below graphs)
         self._render_species_panel(ui_surface)
         
@@ -941,7 +950,8 @@ class ResearchPlatform:
         hh = world_h / 2
         
         glDisable(GL_LIGHTING)
-        glColor4f(0.1, 0.15, 0.2, 1.0)
+        # Warm brown ground (critterding heritage)
+        glColor4f(0.35, 0.28, 0.18, 1.0)
         glBegin(GL_QUADS)
         glVertex3f(-hw, -hh, 0)
         glVertex3f(hw, -hh, 0)
@@ -949,8 +959,8 @@ class ResearchPlatform:
         glVertex3f(-hw, hh, 0)
         glEnd()
         
-        # Grid lines
-        glColor4f(0.2, 0.25, 0.3, 0.5)
+        # Grid lines (slightly lighter brown)
+        glColor4f(0.42, 0.35, 0.25, 0.4)
         glBegin(GL_LINES)
         grid_spacing = 50.0
         for x in np.arange(-hw, hw + grid_spacing, grid_spacing):
@@ -973,9 +983,35 @@ class ResearchPlatform:
             glTranslatef(resource.x, resource.y, resource.z + resource.radius)
             
             if resource.resource_type == ResourceType.FOOD:
-                # Food as green sphere
-                glColor4f(0.0, 1.0, 0.0, 0.8)
-                draw_sphere(resource.radius, slices=8, stacks=8)
+                # Food as green cube (critterding heritage)
+                glColor4f(0.0, 0.9, 0.0, 0.9)
+                r = resource.radius
+                glBegin(GL_QUADS)
+                # Top
+                glNormal3f(0, 0, 1)
+                glVertex3f(-r, -r, r); glVertex3f(r, -r, r)
+                glVertex3f(r, r, r); glVertex3f(-r, r, r)
+                # Bottom
+                glNormal3f(0, 0, -1)
+                glVertex3f(-r, -r, -r); glVertex3f(-r, r, -r)
+                glVertex3f(r, r, -r); glVertex3f(r, -r, -r)
+                # Front
+                glNormal3f(0, -1, 0)
+                glVertex3f(-r, -r, -r); glVertex3f(r, -r, -r)
+                glVertex3f(r, -r, r); glVertex3f(-r, -r, r)
+                # Back
+                glNormal3f(0, 1, 0)
+                glVertex3f(-r, r, -r); glVertex3f(-r, r, r)
+                glVertex3f(r, r, r); glVertex3f(r, r, -r)
+                # Left
+                glNormal3f(-1, 0, 0)
+                glVertex3f(-r, -r, -r); glVertex3f(-r, -r, r)
+                glVertex3f(-r, r, r); glVertex3f(-r, r, -r)
+                # Right
+                glNormal3f(1, 0, 0)
+                glVertex3f(r, -r, -r); glVertex3f(r, r, -r)
+                glVertex3f(r, r, r); glVertex3f(r, -r, r)
+                glEnd()
             
             elif resource.resource_type == ResourceType.DRUG_MUSHROOM:
                 # Drug mushroom stem
@@ -1637,6 +1673,7 @@ class ResearchPlatform:
             "",
             "VISUALIZATION:",
             "  1-8: Render modes (1=creatures, 8=all)",
+            "  B: Brain view (select creature first)",
             "  C: Toggle Circuit8 | T: Toggle thoughts",
             "  P: Toggle psychedelic | U: Toggle audio",
             "  H: Toggle this help",
@@ -1720,6 +1757,102 @@ class ResearchPlatform:
         self._spawn_initial_creatures(count=initial_count)
         
         self.console.add_line(f"=== NEW SIMULATION — {len(self.creatures)} creatures ===")
+    
+    def _render_brain_view(self, surface):
+        """Render brain visualization panel (critterding brainview).
+        
+        Shows selected creature's neural network:
+        - Green lines = excitatory synapses
+        - Red lines = inhibitory synapses
+        - Line brightness = weight strength
+        - Dots = neurons (green=firing, red=inhibitory, gray=resting)
+        """
+        c = self.selected_creature
+        if not c or not hasattr(c, 'network'):
+            return
+        
+        network = c.network
+        n_neurons = len(network.neurons)
+        n_synapses = len(network.synapses)
+        
+        # Panel dimensions
+        panel_w = 400
+        panel_h = 400
+        panel_x = (self.width - panel_w) // 2
+        panel_y = (self.height - panel_h) // 2
+        
+        # Create panel surface
+        panel = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+        panel.fill((5, 5, 15, 230))
+        pygame.draw.rect(panel, (60, 100, 60), (0, 0, panel_w, panel_h), 2)
+        
+        # Title
+        title = self.small_font.render(
+            f"BRAIN — Creature {c.creature_id} (n:{n_neurons} s:{n_synapses})",
+            True, (150, 255, 150)
+        )
+        panel.blit(title, (panel_w // 2 - title.get_width() // 2, 4))
+        
+        # Layout neurons in a circle
+        margin = 30
+        center_x = panel_w // 2
+        center_y = panel_h // 2 + 10
+        radius = min(panel_w, panel_h) // 2 - margin
+        
+        # Pre-compute neuron positions
+        neuron_positions = {}
+        for i, neuron in enumerate(network.neurons):
+            angle = (i / max(1, n_neurons)) * 2 * 3.14159
+            nx = int(center_x + radius * np.cos(angle))
+            ny = int(center_y + radius * np.sin(angle))
+            neuron_positions[neuron.neuron_id] = (nx, ny)
+        
+        # Draw synapses (lines)
+        max_draw = min(2000, n_synapses)  # Limit for performance
+        step = max(1, n_synapses // max_draw)
+        for i in range(0, n_synapses, step):
+            synapse = network.synapses[i]
+            pre_pos = neuron_positions.get(synapse.pre_neuron.neuron_id)
+            post_pos = neuron_positions.get(synapse.post_neuron.neuron_id)
+            if pre_pos and post_pos:
+                # Color: green=excitatory, red=inhibitory
+                weight = abs(synapse.weight)
+                alpha = min(255, int(weight * 50 + 20))
+                if synapse.is_inhibitory:
+                    color = (min(255, int(150 + weight * 30)), 30, 30, alpha)
+                else:
+                    color = (30, min(255, int(150 + weight * 30)), 30, alpha)
+                pygame.draw.line(panel, color, pre_pos, post_pos, 1)
+        
+        # Draw neurons (dots on top of lines)
+        for i, neuron in enumerate(network.neurons):
+            pos = neuron_positions.get(neuron.neuron_id)
+            if not pos:
+                continue
+            
+            # Color based on state
+            if neuron.fired_last_step():
+                color = (255, 255, 100)  # Yellow = just fired
+                dot_size = 4
+            elif neuron.is_inhibitory():
+                color = (200, 60, 60)  # Red = inhibitory
+                dot_size = 3
+            elif neuron.potential > neuron.threshold * 0.5:
+                color = (100, 255, 100)  # Green = near threshold
+                dot_size = 3
+            else:
+                color = (100, 100, 100)  # Gray = resting
+                dot_size = 2
+            
+            pygame.draw.circle(panel, color, pos, dot_size)
+        
+        # Stats at bottom
+        activity = network.get_activity_level()
+        stats_text = f"Activity: {activity*100:.1f}%  |  Press B to close"
+        stats_surf = self.small_font.render(stats_text, True, (180, 180, 180))
+        panel.blit(stats_surf, (panel_w // 2 - stats_surf.get_width() // 2, panel_h - 16))
+        
+        surface.blit(panel, (panel_x, panel_y))
     
     def _render_species_panel(self, surface):
         """Render species color table (critterding heritage).
