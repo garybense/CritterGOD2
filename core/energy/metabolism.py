@@ -56,12 +56,15 @@ class EnergySystem:
         self.max_energy = max_energy
         
         # Energy costs per timestep (from profiles)
-        self.base_metabolism = 50.0  # Just being alive
-        self.neuron_existence_cost = 0.01  # Per neuron
-        self.synapse_existence_cost = 0.001  # Per synapse
-        self.neuron_firing_cost = 1.0  # When neuron fires
-        self.motor_activation_cost = 10.0  # Using muscles
-        self.reproduction_cost = 500000.0  # Creating offspring
+        # Tuned so creatures deplete ~1M energy in ~60s at 30fps
+        # Creates genuine survival pressure → active food seeking
+        self.base_metabolism = 500.0  # Just being alive costs a lot
+        self.neuron_existence_cost = 0.1  # Per neuron (big brains are expensive)
+        self.synapse_existence_cost = 0.01  # Per synapse
+        self.neuron_firing_cost = 5.0  # When neuron fires
+        self.motor_activation_cost = 50.0  # Using muscles
+        self.body_mass_cost = 5.0  # Per unit body mass (heavier bodies cost more)
+        self.reproduction_cost = 200000.0  # Creating offspring (tuned for survival)
         
         # Tracking
         self.total_consumed = 0.0
@@ -104,7 +107,8 @@ class EnergySystem:
         num_neurons: int,
         num_synapses: int,
         num_firing: int,
-        motor_activity: float = 0.0
+        motor_activity: float = 0.0,
+        body_mass: float = 0.0
     ) -> bool:
         """
         Pay metabolic costs for timestep.
@@ -114,6 +118,7 @@ class EnergySystem:
             num_synapses: Number of synapses
             num_firing: Number of neurons firing this timestep
             motor_activity: Motor neuron activation level (0-1)
+            body_mass: Total body mass (heavier = more expensive)
             
         Returns:
             True if enough energy, False if starving
@@ -123,7 +128,8 @@ class EnergySystem:
             num_neurons * self.neuron_existence_cost +
             num_synapses * self.synapse_existence_cost +
             num_firing * self.neuron_firing_cost +
-            motor_activity * self.motor_activation_cost
+            motor_activity * self.motor_activation_cost +
+            body_mass * self.body_mass_cost
         )
         
         success = self.spend_energy(cost)
@@ -147,7 +153,7 @@ class EnergySystem:
         """Get current energy as fraction of max (0-1)."""
         return self.energy / self.max_energy
         
-    def transfer_to_offspring(self, fraction: float = 0.3) -> float:
+    def transfer_to_offspring(self, fraction: float = 0.2) -> float:
         """
         Transfer energy to offspring at birth.
         

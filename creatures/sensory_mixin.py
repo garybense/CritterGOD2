@@ -102,6 +102,18 @@ class CompleteSensoryMixin:
             'can_procreate': 0.0,      # Binary: can creature reproduce right now?
         }
         
+        # Food direction sensors (THE KEY TO EVOLUTION)
+        # These give the neural network actionable survival information:
+        # direction to nearest food encoded as compass channels
+        self.food_direction = {
+            'food_left': 0.0,      # Food is to the left (0-1)
+            'food_right': 0.0,     # Food is to the right (0-1)
+            'food_forward': 0.0,   # Food is ahead (0-1)
+            'food_back': 0.0,      # Food is behind (0-1)
+            'food_distance': 0.0,  # 1=touching, 0=far away
+            'food_urgency': 0.0,   # How hungry (0=sated, 1=starving)
+        }
+        
         # Pen-position motor system (from looser.c lines 227-246)
         # Each creature has a drawing cursor on Circuit8
         # Motor neurons control pen position; sensors read at pen position
@@ -115,6 +127,9 @@ class CompleteSensoryMixin:
         This gathers all sensory information and prepares it for
         injection into the neural network.
         """
+        # Food direction (CRITICAL for evolution — must sense where food is)
+        self._sense_food_direction()
+        
         # Visual perception
         if self.vision_enabled and self.retinal_array:
             self._sense_vision()
@@ -151,6 +166,23 @@ class CompleteSensoryMixin:
             return
         
         idx = 0
+        
+        # 0. FOOD DIRECTION (highest priority — THE survival signal)
+        # These 6 neurons are the neural network's lifeline to finding food.
+        # Evolution will wire these to motor outputs for food-seeking behavior.
+        food_vals = [
+            self.food_direction['food_left'] * 2000.0,
+            self.food_direction['food_right'] * 2000.0,
+            self.food_direction['food_forward'] * 2000.0,
+            self.food_direction['food_back'] * 2000.0,
+            self.food_direction['food_distance'] * 1500.0,
+            self.food_direction['food_urgency'] * 3000.0,  # Strong hunger signal
+        ]
+        for val in food_vals:
+            if idx >= len(sensory_neurons):
+                break
+            sensory_neurons[idx].add_input(val)
+            idx += 1
         
         # 1. VISION (majority of sensory neurons)
         if self.visual_input is not None:
@@ -276,6 +308,62 @@ class CompleteSensoryMixin:
         if hasattr(self, 'network'):
             activity = self.network.get_activity_level()
             self.internal_state['arousal'] = activity
+    
+    def _sense_food_direction(self):
+        """
+        Sense direction to nearest food source.
+        
+        THIS IS THE KEY TO EVOLUTION. The neural network needs to know
+        where food is so it can evolve to move toward it. Without this,
+        there's no selection pressure on motor outputs.
+        
+        Encodes direction as 4 compass channels (left/right/forward/back)
+        plus distance and hunger urgency.
+        """
+        # Reset
+        self.food_direction = {
+            'food_left': 0.0,
+            'food_right': 0.0,
+            'food_forward': 0.0,
+            'food_back': 0.0,
+            'food_distance': 0.0,
+            'food_urgency': 0.0,
+        }
+        
+        # Get target resource from behavioral system
+        target = getattr(self, 'target_resource', None)
+        if target is None or not target.active:
+            # No food visible — urgency from hunger only
+            if hasattr(self, 'energy'):
+                self.food_direction['food_urgency'] = 1.0 - (self.energy.energy / self.energy.max_energy)
+            return
+        
+        # Direction vector to food
+        dx = target.x - self.x
+        dy = target.y - self.y
+        dist = np.sqrt(dx * dx + dy * dy)
+        
+        if dist < 0.1:
+            # On top of food
+            self.food_direction['food_distance'] = 1.0
+        else:
+            # Normalize direction
+            nx = dx / dist
+            ny = dy / dist
+            
+            # Encode as 4 compass channels (each 0-1)
+            # Right = +X, Left = -X, Forward = +Y, Back = -Y
+            self.food_direction['food_right'] = max(0.0, nx)
+            self.food_direction['food_left'] = max(0.0, -nx)
+            self.food_direction['food_forward'] = max(0.0, ny)
+            self.food_direction['food_back'] = max(0.0, -ny)
+            
+            # Distance: 1.0 = touching, 0.0 = far away (>250 units)
+            self.food_direction['food_distance'] = max(0.0, 1.0 - dist / 250.0)
+        
+        # Urgency from hunger
+        if hasattr(self, 'energy'):
+            self.food_direction['food_urgency'] = 1.0 - (self.energy.energy / self.energy.max_energy)
     
     def _sense_chemistry(self):
         """Sense chemical environment (drugs available in self.drugs)."""

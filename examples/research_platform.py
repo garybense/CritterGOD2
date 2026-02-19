@@ -364,6 +364,46 @@ class ResearchPlatform:
         for creature in new_creatures:
             self.logger.log_birth(creature, self.timestep)
     
+    def _breed_from_fittest(self):
+        """Breed a new creature from the fittest living survivor.
+        
+        Instead of spawning random creatures, this mutates the genome of
+        the creature with the most energy — preserving evolved lineages.
+        Natural selection in action: survivors pass on their genes.
+        """
+        if not self.creatures:
+            return
+        
+        # Find fittest creature (highest energy = best at surviving)
+        fittest = max(self.creatures, key=lambda c: c.energy.energy)
+        
+        # Mutate its genotype and body
+        offspring_genotype = fittest.genotype.mutate(mutation_rate=0.5, max_mutations=50)
+        offspring_body = fittest.body.mutate(mutation_rate=0.3) if fittest.body else None
+        
+        # Spawn near parent
+        world_w = int(self.config.get("world_size_x"))
+        world_h = int(self.config.get("world_size_y"))
+        ox = np.clip(fittest.x + np.random.uniform(-30, 30), -world_w/2, world_w/2)
+        oy = np.clip(fittest.y + np.random.uniform(-30, 30), -world_h/2, world_h/2)
+        
+        from creatures.collective_creature import CollectiveCreature
+        offspring = CollectiveCreature(
+            genotype=offspring_genotype,
+            body=offspring_body,
+            x=ox,
+            y=oy,
+            z=10.0,
+            initial_energy=500000.0,
+            circuit8=self.circuit8,
+            physics_world=self.physics_world,
+            collective_memory=self.collective_memory,
+        )
+        offspring.generation = getattr(fittest, 'generation', 0) + 1
+        offspring.adam_distance = getattr(fittest, 'adam_distance', 0) + 1
+        self.creatures.append(offspring)
+        self.logger.log_reproduction(fittest, None, offspring, self.timestep)
+    
     def _on_config_change(self, parameter):
         """Handle configuration parameter change."""
         self.console.add_line(f"Config: {parameter.name} = {parameter.value:.2f}")
@@ -468,13 +508,13 @@ class ResearchPlatform:
             self.creatures.remove(victim)
             self.logger.log_death(victim, self.timestep, "fell in the pit")
         
-        # Auto-insert new creatures (critterding: insertcritterevery)
+        # Auto-insert: breed from fittest survivor (preserves evolved lineages)
         if (self.insert_creature_every > 0 and 
             self.timestep % self.insert_creature_every == 0 and
             len(self.creatures) < self.max_population and
-            len(self.creatures) > 0):  # Don't auto-insert if extinct
-            self._spawn_initial_creatures(count=1)
-            self.console.add_line(f"Auto-inserted new creature (pop: {len(self.creatures)})")
+            len(self.creatures) > 0):
+            self._breed_from_fittest()
+            self.console.add_line(f"Bred offspring from fittest (pop: {len(self.creatures)})")
         
         # Check for extinction
         if len(self.creatures) == 0 and not self.extinct:
@@ -859,6 +899,12 @@ class ResearchPlatform:
         if self.show_thoughts:
             self._collect_thoughts()
         
+        # Save 3D matrices BEFORE switching to 2D
+        # (needed by thought bubbles and tooltip for world→screen projection)
+        self._3d_viewport = glGetIntegerv(GL_VIEWPORT)
+        self._3d_modelview = glGetDoublev(GL_MODELVIEW_MATRIX)
+        self._3d_projection = glGetDoublev(GL_PROJECTION_MATRIX)
+        
         # Switch to 2D for UI - clear depth buffer and use fresh matrices
         glClear(GL_DEPTH_BUFFER_BIT)  # Clear depth so 2D always renders on top
         
@@ -1100,7 +1146,7 @@ class ResearchPlatform:
         world_h = int(self.config.get("world_size_y"))
         x = np.random.uniform(-world_w/2, world_w/2)
         y = np.random.uniform(-world_h/2, world_h/2)
-        food = create_food(x, y, 0.0)
+        food = create_food(x, y)
         self.resource_manager.resources.append(food)
         
         # Create physics body
@@ -1123,7 +1169,7 @@ class ResearchPlatform:
         x = np.random.uniform(-world_w/2, world_w/2)
         y = np.random.uniform(-world_h/2, world_h/2)
         molecule_type = np.random.randint(0, 5)
-        drug = create_drug_mushroom(x, y, 0.0, molecule_type)
+        drug = create_drug_mushroom(x, y, molecule_type)
         self.resource_manager.resources.append(drug)
         
         # Create physics body
@@ -1199,13 +1245,12 @@ class ResearchPlatform:
         closest_creature = None
         closest_screen_dist = 60.0  # Max pixel distance for picking
         
-        # Get current OpenGL matrices for projection
-        try:
-            viewport = glGetIntegerv(GL_VIEWPORT)
-            modelview = glGetDoublev(GL_MODELVIEW_MATRIX)
-            projection = glGetDoublev(GL_PROJECTION_MATRIX)
-        except Exception:
+        # Use saved 3D matrices (current matrices may be 2D orthographic)
+        if not hasattr(self, '_3d_viewport'):
             return
+        viewport = self._3d_viewport
+        modelview = self._3d_modelview
+        projection = self._3d_projection
         
         mx, my = mouse_pos
         
@@ -1578,11 +1623,13 @@ class ResearchPlatform:
         if mx < 300 or mx > self.width - 300:
             return
         
-        try:
-            viewport = glGetIntegerv(GL_VIEWPORT)
-            modelview = glGetDoublev(GL_MODELVIEW_MATRIX)
-            projection = glGetDoublev(GL_PROJECTION_MATRIX)
-        except Exception:
+        # Use saved 3D matrices (current matrices are 2D orthographic)
+        if not hasattr(self, '_3d_viewport'):
+            return
+        viewport = self._3d_viewport
+        modelview = self._3d_modelview
+        projection = self._3d_projection
+        if viewport is None or modelview is None or projection is None:
             return
         
         best_label = None
@@ -1749,12 +1796,12 @@ class ResearchPlatform:
     
     def _render_thought_bubbles(self, surface):
         """Render thought bubbles in 2D, projected from world-space."""
-        try:
-            viewport = glGetIntegerv(GL_VIEWPORT)
-            modelview = glGetDoublev(GL_MODELVIEW_MATRIX)
-            projection = glGetDoublev(GL_PROJECTION_MATRIX)
-        except Exception:
+        # Use saved 3D matrices (current matrices are 2D orthographic)
+        if not hasattr(self, '_3d_viewport'):
             return
+        viewport = self._3d_viewport
+        modelview = self._3d_modelview
+        projection = self._3d_projection
         
         for i, creature in enumerate(self.creatures[:10]):
             if hasattr(creature, 'get_current_thought'):
@@ -2192,9 +2239,17 @@ class ResearchPlatform:
     
     def _render_stats_overlay(self, surface):
         """Render quick stats overlay."""
+        # Calculate evolutionary stats
+        max_gen = 0
+        avg_gen = 0.0
+        if self.creatures:
+            gens = [getattr(c, 'generation', 0) for c in self.creatures]
+            max_gen = max(gens)
+            avg_gen = sum(gens) / len(gens)
+        
         stats_text = [
             f"Timestep: {self.timestep}",
-            f"Creatures: {len(self.creatures)}",
+            f"Creatures: {len(self.creatures)}  |  Gen: {max_gen} (avg {avg_gen:.1f})",
             f"FPS: {self.clock.get_fps():.1f}",
             f"{'PAUSED' if self.paused else ''}",
         ]

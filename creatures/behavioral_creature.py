@@ -119,36 +119,14 @@ class BehavioralCreature(MorphologicalCreature):
             # Find new target based on needs
             self.target_resource = self._find_best_resource(resource_manager)
         
-        # If we have a target, move toward it
+        # If we have a target and are touching it, consume
+        # Movement toward food is now driven ENTIRELY by neural motor outputs
+        # (see PhysicsCreature.apply_neural_forces and food-direction sensors)
         if self.target_resource is not None and self.target_resource.active:
-            # Calculate distance
             dist = self.target_resource.distance_to(self.x, self.y, self.z)
-            
-            # If in range, consume
             if dist <= self.target_resource.radius:
                 self._consume_resource(self.target_resource, resource_manager)
-                self.target_resource = None  # Find new target next timestep
-            else:
-                # Move toward target
-                dx, dy = self.behavior.get_movement_direction(self.x, self.y, self.target_resource)
-                
-                # If physics is active, apply force instead of direct position modification
-                if hasattr(self, 'rigid_body') and self.rigid_body is not None:
-                    # Apply strong seeking force toward target
-                    # Scale with hunger urgency: starving creatures move faster
-                    urgency = 1.0 + max(0, (self.behavior.hunger_threshold - self.energy.energy) / self.behavior.hunger_threshold) * 3.0
-                    seek_force = 8.0 * urgency
-                    force = np.array([dx * seek_force, dy * seek_force, 0.0], dtype=np.float32)
-                    self.rigid_body.apply_force(force)
-                else:
-                    # No physics - move directly (fallback)
-                    move_dist = self.movement_speed * dt
-                    self.x += dx * move_dist
-                    self.y += dy * move_dist
-                    
-                    # Stay in world bounds (simple wrapping for now)
-                    self.x = self.x % resource_manager.world_width
-                    self.y = self.y % resource_manager.world_height
+                self.target_resource = None
     
     def _find_best_resource(self, resource_manager: ResourceManager) -> Optional[Resource]:
         """Find most motivating resource within detection range.

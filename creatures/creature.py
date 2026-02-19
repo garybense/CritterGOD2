@@ -270,11 +270,17 @@ class Creature:
         else:
             motor_activity = 0.0
         
+        # Calculate body mass for metabolic cost (heavier = more expensive)
+        body_mass = 0.0
+        if hasattr(self, 'body') and self.body:
+            body_mass = self.body.get_total_mass()
+        
         alive = self.energy.update_metabolism(
             num_neurons=len(self.network.neurons),
             num_synapses=len(self.network.synapses),
             num_firing=num_firing,
-            motor_activity=motor_activity
+            motor_activity=motor_activity,
+            body_mass=body_mass
         )
         
         # Decay drugs

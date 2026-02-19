@@ -516,8 +516,8 @@ class CollectiveCreature(PhysicsCreature, PsychedelicVisionMixin, CompleteSensor
             )
         
         # Reproduce asexually (for now - sexual reproduction requires finding mates)
-        # Only reproduce if energy is high enough
-        if self.energy.energy > 800000:  # 80% of max energy
+        # Only reproduce if energy is high enough (tuned for new energy economy)
+        if self.energy.energy > 600000:  # Successful foragers can reproduce
             offspring = self._create_offspring()
             return offspring
         

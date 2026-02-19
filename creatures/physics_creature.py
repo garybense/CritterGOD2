@@ -78,8 +78,10 @@ class PhysicsCreature(BehavioralCreature):
         self.rigid_body: Optional[RigidBody] = None
         
         # Motor control parameters
-        self.motor_force_scale = 15.0  # Neural output → force conversion
-        self.max_force = 20.0  # Maximum force per timestep
+        # These are the SOLE driver of creature movement.
+        # Evolution selects networks that map food-direction sensors to correct motor outputs.
+        self.motor_force_scale = 50.0  # Neural output → force conversion
+        self.max_force = 60.0  # Maximum force per timestep
         
         # Collision state
         self.colliding_with_resource = False
@@ -179,6 +181,13 @@ class PhysicsCreature(BehavioralCreature):
         force_magnitude = np.linalg.norm(force)
         if force_magnitude > self.max_force:
             force = force * (self.max_force / force_magnitude)
+        
+        # Add small random wander force so stationary creatures drift
+        # This gives evolution something to select FROM — pure stillness
+        # means no chance encounters with food
+        wander = np.random.uniform(-1.0, 1.0, size=3).astype(np.float32)
+        wander[2] = 0.0  # No vertical wander
+        force += wander
         
         # Apply force to rigid body
         self.rigid_body.apply_force(force)
