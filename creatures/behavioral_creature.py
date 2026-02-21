@@ -122,9 +122,14 @@ class BehavioralCreature(MorphologicalCreature):
         # If we have a target and are touching it, consume
         # Movement toward food is now driven ENTIRELY by neural motor outputs
         # (see PhysicsCreature.apply_neural_forces and food-direction sensors)
+        # Use 2D distance (XY only) because creatures live at z=10, food at z=0.
+        # Consumption radius is larger than visual radius so creatures can actually eat.
         if self.target_resource is not None and self.target_resource.active:
-            dist = self.target_resource.distance_to(self.x, self.y, self.z)
-            if dist <= self.target_resource.radius:
+            dx = self.target_resource.x - self.x
+            dy = self.target_resource.y - self.y
+            dist_2d = np.sqrt(dx*dx + dy*dy)
+            eat_radius = 15.0  # Generous 2D radius for eating
+            if dist_2d <= eat_radius:
                 self._consume_resource(self.target_resource, resource_manager)
                 self.target_resource = None
     

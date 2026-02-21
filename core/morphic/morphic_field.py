@@ -177,13 +177,13 @@ class MorphicFieldReader:
         elif field_type == FieldType.DANGER_ZONE:
             intensity = r / 255.0
         elif field_type == FieldType.MATING_SIGNAL:
-            intensity = (r + b) / 510.0
+            intensity = (int(r) + int(b)) / 510.0
         elif field_type == FieldType.TERRITORY:
             intensity = b / 255.0
         elif field_type == FieldType.EXCITEMENT:
-            intensity = (r + g) / 510.0
+            intensity = (int(r) + int(g)) / 510.0
         elif field_type == FieldType.CALM:
-            intensity = (g + b) / 510.0
+            intensity = (int(g) + int(b)) / 510.0
         
         return intensity
     

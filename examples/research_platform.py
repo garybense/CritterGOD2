@@ -278,6 +278,9 @@ class ResearchPlatform:
         # Auto-insert creatures (critterding heritage: insertcritterevery)
         self.insert_creature_every = 2000  # Insert new random creature every N timesteps
         
+        # Falling creatures (off-edge death animation)
+        self.falling_creatures = []  # List of {x, y, z, vz, timer, creature_id}
+        
         # Inspector button regions (for click detection)
         self.inspector_buttons = []  # List of (rect, action_name) tuples
         
@@ -493,12 +496,11 @@ class ResearchPlatform:
             )
         
         # World edge "pit" deaths (critterding heritage)
-        # Creatures that wander off the edge die — creates selection pressure
+        # Creatures that wander off the edge fall and die
         world_w = int(self.config.get("world_size_x"))
         world_h = int(self.config.get("world_size_y"))
-        pit_margin = 20.0
-        pit_boundary_x = world_w / 2 + pit_margin
-        pit_boundary_y = world_h / 2 + pit_margin
+        pit_boundary_x = world_w / 2
+        pit_boundary_y = world_h / 2
         pit_victims = []
         for creature in self.creatures:
             if (abs(creature.x) > pit_boundary_x or 
@@ -507,6 +509,23 @@ class ResearchPlatform:
         for victim in pit_victims:
             self.creatures.remove(victim)
             self.logger.log_death(victim, self.timestep, "fell in the pit")
+            # Start falling animation
+            self.falling_creatures.append({
+                'x': victim.x, 'y': victim.y, 'z': 10.0,
+                'vz': 0.0, 'timer': 60,  # ~1 second at 60fps
+                'creature_id': getattr(victim, 'creature_id', '?'),
+                'mesh': getattr(victim, 'mesh', None),
+                'body': getattr(victim, 'body', None),
+            })
+            # Play fall sound
+            self._play_fall_sound()
+        
+        # Update falling creatures (gravity animation)
+        for fc in self.falling_creatures:
+            fc['vz'] -= 0.8  # Gravity acceleration
+            fc['z'] += fc['vz']
+            fc['timer'] -= 1
+        self.falling_creatures = [fc for fc in self.falling_creatures if fc['timer'] > 0 and fc['z'] > -200]
         
         # Auto-insert: breed from fittest survivor (preserves evolved lineages)
         if (self.insert_creature_every > 0 and 
@@ -887,6 +906,9 @@ class ResearchPlatform:
         glDisable(GL_BLEND)
         glEnable(GL_LIGHTING)
         
+        # Render falling creatures (off-edge death animation)
+        self._render_falling_creatures()
+        
         # Render velocity vectors
         if self.render_mode in [5, 8]:  # Physics debug mode
             self._render_velocity_vectors()
@@ -1187,13 +1209,26 @@ class ResearchPlatform:
         self.console.add_line(f"🍄 Spawned {drug_names[molecule_type]} at ({x:.0f}, {y:.0f})")
     
     def _apply_random_impulses(self):
-        """Apply random impulses to all creatures."""
+        """Apply gentle random impulses to all creatures (won't fling off edge)."""
+        world_w = int(self.config.get("world_size_x"))
+        world_h = int(self.config.get("world_size_y"))
+        half_w = world_w / 2
+        half_h = world_h / 2
         for creature in self.creatures:
             if hasattr(creature, 'apply_impulse'):
-                impulse = np.random.uniform(-500, 500, size=3).astype(np.float32)
-                impulse[2] = abs(impulse[2])  # Always push up
+                impulse = np.random.uniform(-40, 40, size=3).astype(np.float32)
+                impulse[2] = abs(impulse[2]) * 0.3  # Tiny upward nudge
+                # Bias impulse AWAY from edges (toward center)
+                if creature.x > half_w * 0.6:
+                    impulse[0] = -abs(impulse[0])
+                elif creature.x < -half_w * 0.6:
+                    impulse[0] = abs(impulse[0])
+                if creature.y > half_h * 0.6:
+                    impulse[1] = -abs(impulse[1])
+                elif creature.y < -half_h * 0.6:
+                    impulse[1] = abs(impulse[1])
                 creature.apply_impulse(impulse)
-        self.console.add_line("💥 Applied random impulses to all creatures!")
+        self.console.add_line("💥 Applied gentle impulses to all creatures")
     
     def _give_drug_to_all(self, molecule_type: int):
         """Give drug to all creatures."""
@@ -1939,8 +1974,7 @@ class ResearchPlatform:
         self.resource_manager.spawn_initial_resources()
         
         # Spawn fresh creatures
-        initial_count = int(self.config.get("initial_population"))
-        self._spawn_initial_creatures(count=initial_count)
+        self._spawn_initial_creatures(count=15)
         
         self.console.add_line(f"=== NEW SIMULATION — {len(self.creatures)} creatures ===")
     
@@ -2220,6 +2254,59 @@ class ResearchPlatform:
                 c.mesh = None  # Force mesh regeneration
                 self.logger.log_mutation(c, self.timestep, "body mutant")
                 self.console.add_line(f"Body mutated creature {c.creature_id}")
+    
+    def _play_fall_sound(self):
+        """Play a falling/death sound effect (programmatically generated)."""
+        try:
+            duration = 0.4  # seconds
+            sample_rate = 44100
+            n_samples = int(duration * sample_rate)
+            t = np.linspace(0, duration, n_samples, dtype=np.float32)
+            # Descending pitch whistle + noise burst
+            freq = 800 * np.exp(-4.0 * t)  # Pitch drops from 800Hz to ~16Hz
+            signal = np.sin(2 * np.pi * freq * t) * np.exp(-3.0 * t)
+            # Add a bit of noise for impact feel
+            noise = np.random.uniform(-0.15, 0.15, n_samples).astype(np.float32)
+            noise *= np.exp(-8.0 * t)  # Quick noise burst at start
+            signal = np.clip(signal + noise, -1.0, 1.0)
+            audio_int16 = (signal * 20000).astype(np.int16)
+            stereo = np.column_stack((audio_int16, audio_int16))
+            sound = pygame.sndarray.make_sound(stereo)
+            sound.play()
+        except Exception:
+            pass
+    
+    def _render_falling_creatures(self):
+        """Render creatures that are falling off the edge (death animation)."""
+        if not self.falling_creatures:
+            return
+        
+        glEnable(GL_LIGHTING)
+        for fc in self.falling_creatures:
+            glPushMatrix()
+            glTranslatef(fc['x'], fc['y'], fc['z'])
+            
+            # Spin as they fall
+            spin = (60 - fc['timer']) * 12.0
+            glRotatef(spin, 0.3, 1.0, 0.2)
+            
+            # Shrink as they fall further
+            scale = max(0.1, fc['z'] / 10.0) if fc['z'] > 0 else 0.1
+            body_scale = 5.0 * scale
+            glScalef(body_scale, body_scale, body_scale)
+            
+            # Red tint for dying
+            alpha = max(0.1, fc['timer'] / 60.0)
+            glColor4f(1.0, 0.3, 0.2, alpha)
+            
+            # Render mesh if available, otherwise a simple sphere
+            if fc.get('mesh'):
+                fc['mesh'].render()
+            else:
+                draw_sphere(1.0, slices=6, stacks=6)
+            
+            glPopMatrix()
+        glEnable(GL_LIGHTING)
     
     def _render_velocity_vectors(self):
         """Render velocity vectors for moving creatures."""

@@ -551,12 +551,18 @@ class CollectiveCreature(PhysicsCreature, PsychedelicVisionMixin, CompleteSensor
         if self.markov and self.markov.chain.chain:
             seed_text = self.markov.generate_and_evolve(max_length=20)
         
-        # Create offspring
+        # Create offspring (clamp to world bounds so they don't spawn off-edge)
+        ox = self.x + np.random.uniform(-15, 15)
+        oy = self.y + np.random.uniform(-15, 15)
+        if hasattr(self, 'physics_world') and self.physics_world:
+            bounds = self.physics_world.world_bounds
+            ox = np.clip(ox, bounds[0] + 10, bounds[2] - 10)
+            oy = np.clip(oy, bounds[1] + 10, bounds[3] - 10)
         offspring = CollectiveCreature(
             genotype=offspring_genotype,
             body=offspring_body,
-            x=self.x + np.random.uniform(-15, 15),
-            y=self.y + np.random.uniform(-15, 15),
+            x=ox,
+            y=oy,
             z=self.z if hasattr(self, 'z') else 10.0,
             initial_energy=offspring_energy,
             circuit8=self.circuit8,
@@ -614,10 +620,17 @@ def create_collective_creatures(
     
     min_x, min_y, max_x, max_y = world_bounds
     
+    # Inset spawn area so creatures never appear at the edge
+    spawn_margin = 30.0
+    spawn_min_x = min_x + spawn_margin
+    spawn_min_y = min_y + spawn_margin
+    spawn_max_x = max_x - spawn_margin
+    spawn_max_y = max_y - spawn_margin
+    
     for i in range(n_creatures):
-        # Random position
-        x = np.random.uniform(min_x, max_x)
-        y = np.random.uniform(min_y, max_y)
+        # Random position (clamped within safe zone)
+        x = np.random.uniform(spawn_min_x, spawn_max_x)
+        y = np.random.uniform(spawn_min_y, spawn_max_y)
         z = 10.0
         
         # Random genotype

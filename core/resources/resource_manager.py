@@ -193,8 +193,11 @@ class ResourceManager:
             if resource_type is not None and resource.resource_type != resource_type:
                 continue
             
-            # Check distance
-            if resource.distance_to(x, y, z) <= radius:
+            # Use 2D distance (XY only) because creatures at z=10, food at z=0
+            dx = resource.x - x
+            dy = resource.y - y
+            dist_2d = np.sqrt(dx*dx + dy*dy)
+            if dist_2d <= radius:
                 in_range.append(resource)
         
         return in_range

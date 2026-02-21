@@ -56,15 +56,16 @@ class EnergySystem:
         self.max_energy = max_energy
         
         # Energy costs per timestep (from profiles)
-        # Tuned so creatures deplete ~1M energy in ~60s at 30fps
-        # Creates genuine survival pressure → active food seeking
-        self.base_metabolism = 500.0  # Just being alive costs a lot
-        self.neuron_existence_cost = 0.1  # Per neuron (big brains are expensive)
-        self.synapse_existence_cost = 0.01  # Per synapse
-        self.neuron_firing_cost = 5.0  # When neuron fires
-        self.motor_activation_cost = 50.0  # Using muscles
-        self.body_mass_cost = 5.0  # Per unit body mass (heavier bodies cost more)
-        self.reproduction_cost = 200000.0  # Creating offspring (tuned for survival)
+        # Tuned so creatures deplete ~1M energy in ~2-3 min at 60fps
+        # Must be low enough that creatures live long enough to evolve,
+        # but high enough that food-seeking matters for survival.
+        self.base_metabolism = 50.0  # Just being alive
+        self.neuron_existence_cost = 0.01  # Per neuron
+        self.synapse_existence_cost = 0.001  # Per synapse
+        self.neuron_firing_cost = 0.5  # When neuron fires
+        self.motor_activation_cost = 5.0  # Using muscles
+        self.body_mass_cost = 1.0  # Per unit body mass (heavier bodies cost more)
+        self.reproduction_cost = 200000.0  # Creating offspring
         
         # Tracking
         self.total_consumed = 0.0
