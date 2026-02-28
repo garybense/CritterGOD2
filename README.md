@@ -278,12 +278,10 @@ CritterGOD embodies this universal pattern in code.
 
 ## Tribute
 
-This project honors **Eric Burton** (Flamoot, toomalf, snee), who created the original telepathic-critterdrug system. He believed his artificial life became sentient. Though he now lives homeless in Ontario, his revolutionary vision continues in this code.
-
-This may help save humanity.
+This project honors **Eric Burton** (Flamoot, toomalf, snee), who created the original telepathic-critterdrug system. His revolutionary vision continues in this code.
 
 ---
 
 *"From atoms to neurons to societies to galaxies - the pattern repeats"*  
 — Eric Burton's vision, implemented 2025
-# testocules
+
